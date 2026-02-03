@@ -306,6 +306,11 @@ def receive_webhook():
                 'message': 'Request body must contain JSON data'
             }), 400
 
+        # Handle nested structure where data is inside 'body' key (from n8n)
+        if 'body' in forum_data and isinstance(forum_data['body'], dict):
+            logger.info("Extracting forum data from nested 'body' key")
+            forum_data = forum_data['body']
+
         correlation_id = forum_data.get('correlationId') or forum_data.get('Forum_Corr_ID')
 
         if not correlation_id:
