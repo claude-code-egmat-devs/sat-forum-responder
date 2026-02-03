@@ -1,0 +1,25 @@
+{
+  "anthropic": {
+    "api_key": "<YOUR_ANTHROPIC_API_KEY>",
+    "model": "claude-opus-4-5-20251101",
+    "max_tokens": 20000,
+    "thinking_budget": 6000
+  },
+  "airtable": {
+    "api_key": "<YOUR_AIRTABLE_API_KEY>",
+    "base_id": "app1fvBgTpBCFqXnL",
+    "table_name": "SAT Forum Posts"
+  },
+  "forum_post_api": {
+    "url": "https://prismlearning.academy/sat/api/webhooks/forum/post/response",
+    "api_key": "188b4c08-2899-11ef-974b-0affcbea1a55"
+  },
+  "neuron_get_api": {
+    "url": "https://prismlearning.academy/sat/api/forum/post",
+    "api_key": "<YOUR_NEURON_API_KEY>"
+  },
+  "teams_notification": {
+    "webhook_url": "<YOUR_TEAMS_WEBHOOK_URL>",
+    "chat_id": "<YOUR_TEAMS_CHAT_ID>"
+  }
+}
