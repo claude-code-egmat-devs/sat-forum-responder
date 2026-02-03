@@ -47,9 +47,63 @@ stats = {
     'total_url_detected': 0,
     'total_auth_failed': 0,
     'total_images_transcribed': 0,
+    'total_fetched_by_id': 0,
     'start_time': datetime.now().isoformat(),
     'last_webhook_time': None
 }
+
+
+# =============================================================================
+# FETCH FORUM DATA BY CORRELATION ID
+# =============================================================================
+
+def fetch_forum_data_by_correlation_id(correlation_id: str) -> dict:
+    """
+    Fetch forum data from the LMS API using correlation ID.
+
+    Args:
+        correlation_id: The forum post correlation ID
+
+    Returns:
+        Forum data dictionary or None on failure
+    """
+    try:
+        # Get API configuration
+        neuron_config = config.get_neuron_get_api_config()
+        base_url = neuron_config.get('url', '')
+        api_key = neuron_config.get('api_key', '')
+
+        if not base_url:
+            logger.error("Neuron GET API URL not configured")
+            return None
+
+        # Build the full URL with correlation ID
+        fetch_url = f"{base_url}/{correlation_id}"
+
+        logger.info(f"[{correlation_id}] Fetching forum data from: {fetch_url}")
+
+        headers = {
+            'X-API-KEY': api_key,
+            'Content-Type': 'application/json'
+        }
+
+        response = requests.get(fetch_url, headers=headers, timeout=30)
+
+        if response.status_code == 200:
+            forum_data = response.json()
+            logger.info(f"[{correlation_id}] Successfully fetched forum data - Keys: {list(forum_data.keys())}")
+            stats['total_fetched_by_id'] += 1
+            return forum_data
+        else:
+            logger.error(f"[{correlation_id}] Failed to fetch forum data - Status: {response.status_code}, Response: {response.text[:500]}")
+            return None
+
+    except requests.exceptions.RequestException as e:
+        logger.error(f"[{correlation_id}] Request error fetching forum data: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"[{correlation_id}] Error fetching forum data: {e}")
+        return None
 
 
 # =============================================================================
@@ -298,20 +352,35 @@ def receive_webhook():
                 'message': 'Content-Type must be application/json'
             }), 400
 
-        forum_data = request.get_json()
+        request_data = request.get_json()
 
-        if not forum_data:
+        if not request_data:
             return jsonify({
                 'error': 'Empty request body',
                 'message': 'Request body must contain JSON data'
             }), 400
 
         # Handle nested structure where data is inside 'body' key (from n8n)
-        if 'body' in forum_data and isinstance(forum_data['body'], dict):
+        if 'body' in request_data and isinstance(request_data['body'], dict):
             logger.info("Extracting forum data from nested 'body' key")
-            forum_data = forum_data['body']
+            request_data = request_data['body']
 
-        correlation_id = forum_data.get('correlationId') or forum_data.get('Forum_Corr_ID')
+        # Check if this is just a correlation ID or full data
+        correlation_id = request_data.get('correlationId') or request_data.get('Forum_Corr_ID')
+
+        # If we only have correlation ID (minimal payload), fetch full data from API
+        has_full_data = bool(request_data.get('questionDataVO') or request_data.get('forumPostText') or request_data.get('ForumPostText'))
+
+        if correlation_id and not has_full_data:
+            logger.info(f"[{correlation_id}] Received correlation ID only, fetching full data from API...")
+            forum_data = fetch_forum_data_by_correlation_id(correlation_id)
+            if not forum_data:
+                return jsonify({
+                    'error': 'Failed to fetch forum data',
+                    'message': f'Could not retrieve data for correlation ID: {correlation_id}'
+                }), 502
+        else:
+            forum_data = request_data
 
         if not correlation_id:
             return jsonify({
