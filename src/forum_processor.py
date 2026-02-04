@@ -558,6 +558,19 @@ Subject: {forum_data.get("forumPostSubject", "")}
             urls_list = results.get("urls_list", [])
             urls_list_json = json.dumps(urls_list) if urls_list else ""
 
+            # Extract agent system outputs
+            a1_output = ""
+            if results.get("a1_result") and results["a1_result"].get("parsed"):
+                a1_output = json.dumps(results["a1_result"]["parsed"], ensure_ascii=False)
+
+            a2_output = ""
+            if results.get("a2_result") and results["a2_result"].get("parsed"):
+                a2_output = json.dumps(results["a2_result"]["parsed"], ensure_ascii=False)
+
+            tool_output = ""
+            if results.get("tool_result") and results["tool_result"].get("parsed"):
+                tool_output = json.dumps(results["tool_result"]["parsed"], ensure_ascii=False)
+
             # SAT-specific Airtable data
             airtable_data = {
                 "correlation_id": results["correlation_id"],
@@ -572,7 +585,10 @@ Subject: {forum_data.get("forumPostSubject", "")}
                 "classification": classification,
                 "expert_reply_html": final_response_html,
                 "url_check": str(url_check).lower(),
-                "urls_list": urls_list_json
+                "urls_list": urls_list_json,
+                "a1_triage_output": a1_output,
+                "a2_classification_output": a2_output,
+                "tool_response_output": tool_output
             }
 
             success = self.airtable_client.upsert_forum_response(airtable_data)

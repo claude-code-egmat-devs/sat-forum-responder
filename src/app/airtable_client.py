@@ -128,7 +128,11 @@ class AirtableClient:
             "classification": data.get("classification"),
             "response": data.get("expert_reply_html"),
             "url_check": data.get("url_check", "false"),
-            "urls_list": data.get("urls_list", "")
+            "urls_list": data.get("urls_list", ""),
+            # Agent system outputs
+            "a1_triage_output": data.get("a1_triage_output", ""),
+            "a2_classification_output": data.get("a2_classification_output", ""),
+            "tool_response_output": data.get("tool_response_output", "")
         }
 
         # Remove None values
