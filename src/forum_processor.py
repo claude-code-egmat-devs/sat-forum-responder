@@ -591,12 +591,42 @@ Subject: {forum_data.get("forumPostSubject", "")}
                 "tool_response_output": tool_output
             }
 
-            success = self.airtable_client.upsert_forum_response(airtable_data)
+            # Save to SAT Forum Posts table
+            forum_data_for_airtable = {
+                "correlation_id": airtable_data["correlation_id"],
+                "posted_by": airtable_data.get("posted_by"),
+                "forum_post_subject": airtable_data.get("forum_post_subject"),
+                "forum_post_text": airtable_data.get("forum_post_text"),
+                "image_base64_encoded": airtable_data.get("image_base64_encoded"),
+                "parent_post_query": airtable_data.get("parent_post_query"),
+                "parent_post_response": airtable_data.get("parent_post_response"),
+                "post_type": airtable_data.get("post_type"),
+                "environment": airtable_data.get("environment"),
+                "classification": airtable_data.get("classification"),
+                "expert_reply_html": airtable_data.get("expert_reply_html"),
+                "url_check": airtable_data.get("url_check")
+            }
+            success = self.airtable_client.upsert_forum_response(forum_data_for_airtable)
             if success:
-                logger.info(f"Saved to Airtable: {results['correlation_id']}")
+                logger.info(f"Saved to Airtable (SAT Forum Posts): {results['correlation_id']}")
                 save_status["airtable_saved"] = True
             else:
-                logger.error("Failed to save to Airtable")
+                logger.error("Failed to save to Airtable (SAT Forum Posts)")
+
+            # Save to Agent System Outputs table
+            agent_outputs_data = {
+                "correlation_id": airtable_data["correlation_id"],
+                "urls_list": airtable_data.get("urls_list", ""),
+                "a1_triage_output": airtable_data.get("a1_triage_output", ""),
+                "a2_classification_output": airtable_data.get("a2_classification_output", ""),
+                "tool_response_output": airtable_data.get("tool_response_output", "")
+            }
+            agent_success = self.airtable_client.upsert_agent_outputs(agent_outputs_data)
+            if agent_success:
+                logger.info(f"Saved to Airtable (Agent System Outputs): {results['correlation_id']}")
+                save_status["agent_outputs_saved"] = True
+            else:
+                logger.error("Failed to save to Airtable (Agent System Outputs)")
 
             # Determine if we should post to forum
             should_post = self._should_post_to_forum(results)

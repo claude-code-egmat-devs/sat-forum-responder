@@ -1,6 +1,6 @@
 """
 Airtable client for SAT Forum Responder
-Handles all Airtable operations for SAT Forum Posts table
+Handles all Airtable operations for SAT Forum Posts and Agent System Outputs tables
 """
 
 import requests
@@ -21,19 +21,21 @@ class AirtableClient:
         self.base_id = base_id
         self.table_name = table_name
         self.base_url = f"https://api.airtable.com/v0/{base_id}/{table_name}"
+        # Agent System Outputs table URL
+        self.agent_outputs_url = f"https://api.airtable.com/v0/{base_id}/Agent%20System%20Outputs"
         self.headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
 
-    def create_record(self, fields: Dict[str, Any], retry_count: int = 3) -> Optional[str]:
-        """Create a new record in Airtable"""
+    def _create_record(self, url: str, fields: Dict[str, Any], retry_count: int = 3) -> Optional[str]:
+        """Create a new record in Airtable at specified URL"""
         payload = {"fields": fields}
 
         for attempt in range(retry_count):
             try:
                 response = requests.post(
-                    self.base_url,
+                    url,
                     headers=self.headers,
                     json=payload,
                     timeout=30
@@ -54,15 +56,19 @@ class AirtableClient:
 
         return None
 
-    def update_record(self, record_id: str, fields: Dict[str, Any], retry_count: int = 3) -> bool:
+    def create_record(self, fields: Dict[str, Any], retry_count: int = 3) -> Optional[str]:
+        """Create a new record in the main table"""
+        return self._create_record(self.base_url, fields, retry_count)
+
+    def _update_record(self, url: str, record_id: str, fields: Dict[str, Any], retry_count: int = 3) -> bool:
         """Update an existing record in Airtable"""
-        url = f"{self.base_url}/{record_id}"
+        full_url = f"{url}/{record_id}"
         payload = {"fields": fields}
 
         for attempt in range(retry_count):
             try:
                 response = requests.patch(
-                    url,
+                    full_url,
                     headers=self.headers,
                     json=payload,
                     timeout=30
@@ -81,14 +87,18 @@ class AirtableClient:
 
         return False
 
-    def find_by_correlation_id(self, correlation_id: str) -> Optional[Dict[str, Any]]:
-        """Find a record by correlation_id"""
+    def update_record(self, record_id: str, fields: Dict[str, Any], retry_count: int = 3) -> bool:
+        """Update an existing record in the main table"""
+        return self._update_record(self.base_url, record_id, fields, retry_count)
+
+    def _find_by_correlation_id(self, url: str, correlation_id: str) -> Optional[Dict[str, Any]]:
+        """Find a record by correlation_id in specified table"""
         try:
-            formula = f"{{Forum_Corr_ID}}='{correlation_id}'"
+            formula = f"{{Forum_Corr_ID}}=\047{correlation_id}\047"
             params = {"filterByFormula": formula}
 
             response = requests.get(
-                self.base_url,
+                url,
                 headers=self.headers,
                 params=params,
                 timeout=30
@@ -108,13 +118,17 @@ class AirtableClient:
             logger.error(f"Airtable search error: {e}")
             return None
 
+    def find_by_correlation_id(self, correlation_id: str) -> Optional[Dict[str, Any]]:
+        """Find a record by correlation_id in main table"""
+        return self._find_by_correlation_id(self.base_url, correlation_id)
+
     def upsert_forum_response(self, data: Dict[str, Any]) -> bool:
-        """Create or update a forum response record"""
+        """Create or update a forum response record in SAT Forum Posts table"""
         correlation_id = data.get("correlation_id")
 
         existing_record = self.find_by_correlation_id(correlation_id)
 
-        # SAT-specific field mappings
+        # SAT Forum Posts field mappings (without agent outputs)
         fields = {
             "Forum_Corr_ID": data.get("correlation_id"),
             "postedBy": data.get("posted_by"),
@@ -127,12 +141,7 @@ class AirtableClient:
             "environment": data.get("environment"),
             "classification": data.get("classification"),
             "response": data.get("expert_reply_html"),
-            "url_check": data.get("url_check", "false"),
-            "urls_list": data.get("urls_list", ""),
-            # Agent system outputs
-            "a1_triage_output": data.get("a1_triage_output", ""),
-            "a2_classification_output": data.get("a2_classification_output", ""),
-            "tool_response_output": data.get("tool_response_output", "")
+            "url_check": data.get("url_check", "false")
         }
 
         # Remove None values
@@ -143,4 +152,29 @@ class AirtableClient:
             return self.update_record(record_id, fields)
         else:
             record_id = self.create_record(fields)
+            return record_id is not None
+
+    def upsert_agent_outputs(self, data: Dict[str, Any]) -> bool:
+        """Create or update agent system outputs in Agent System Outputs table"""
+        correlation_id = data.get("correlation_id")
+
+        existing_record = self._find_by_correlation_id(self.agent_outputs_url, correlation_id)
+
+        # Agent System Outputs field mappings
+        fields = {
+            "Forum_Corr_ID": data.get("correlation_id"),
+            "urls_list": data.get("urls_list", ""),
+            "a1_triage_output": data.get("a1_triage_output", ""),
+            "a2_classification_output": data.get("a2_classification_output", ""),
+            "tool_response_output": data.get("tool_response_output", "")
+        }
+
+        # Remove None values
+        fields = {k: v for k, v in fields.items() if v is not None}
+
+        if existing_record:
+            record_id = existing_record["id"]
+            return self._update_record(self.agent_outputs_url, record_id, fields)
+        else:
+            record_id = self._create_record(self.agent_outputs_url, fields)
             return record_id is not None
