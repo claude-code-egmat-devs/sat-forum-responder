@@ -414,11 +414,16 @@ Subject: {forum_data.get("forumPostSubject", "")}
 
             if isinstance(parsed_response.get("response"), dict):
                 response_obj = parsed_response["response"]
-                response_parts = []
-                for key in ["greeting", "main_response", "worked_solution", "comparison_to_official", "closing"]:
-                    if key in response_obj and response_obj[key]:
-                        response_parts.append(response_obj[key])
-                results["final_response"] = "\n\n".join(response_parts)
+                # SAT format: response.content contains the full response
+                if "content" in response_obj and response_obj["content"]:
+                    results["final_response"] = response_obj["content"]
+                else:
+                    # GMAT format: response has multiple parts
+                    response_parts = []
+                    for key in ["greeting", "main_response", "worked_solution", "comparison_to_official", "closing"]:
+                        if key in response_obj and response_obj[key]:
+                            response_parts.append(response_obj[key])
+                    results["final_response"] = "\n\n".join(response_parts)
             elif parsed_response.get("response_html"):
                 results["final_response"] = parsed_response.get("response_html")
                 results["final_response_html"] = parsed_response.get("response_html")

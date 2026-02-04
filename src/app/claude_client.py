@@ -12,6 +12,32 @@ from typing import Dict, Any, Optional, List
 
 logger = logging.getLogger(__name__)
 
+# Claude Opus 4.5 Pricing (per million tokens)
+OPUS_INPUT_PRICE_PER_MILLION = 15.0   # $15 per million input tokens
+OPUS_OUTPUT_PRICE_PER_MILLION = 75.0  # $75 per million output tokens
+
+
+def calculate_cost(input_tokens: int, output_tokens: int) -> Dict[str, float]:
+    """
+    Calculate the cost of an API call based on token usage.
+
+    Args:
+        input_tokens: Number of input tokens
+        output_tokens: Number of output tokens (includes thinking tokens)
+
+    Returns:
+        Dictionary with cost breakdown
+    """
+    input_cost = (input_tokens / 1_000_000) * OPUS_INPUT_PRICE_PER_MILLION
+    output_cost = (output_tokens / 1_000_000) * OPUS_OUTPUT_PRICE_PER_MILLION
+    total_cost = input_cost + output_cost
+
+    return {
+        "input_cost": round(input_cost, 6),
+        "output_cost": round(output_cost, 6),
+        "total_cost": round(total_cost, 6)
+    }
+
 
 class ClaudeClient:
     """Client for interacting with Claude API"""
@@ -59,7 +85,13 @@ class ClaudeClient:
             try:
                 start_time = time.time()
 
-                response = self.client.messages.create(
+                # Use streaming for long requests (required for high max_tokens)
+                text_response = ""
+                thinking_content = ""
+                input_tokens = 0
+                output_tokens = 0
+
+                with self.client.messages.stream(
                     model=self.model,
                     max_tokens=self.max_tokens,
                     thinking={
@@ -71,29 +103,37 @@ class ClaudeClient:
                     messages=[
                         {"role": "user", "content": user_prompt}
                     ]
-                )
+                ) as stream:
+                    response = stream.get_final_message()
 
                 execution_time = int((time.time() - start_time) * 1000)
 
                 # Extract response content
-                text_response = ""
-                thinking_content = ""
-
                 for block in response.content:
                     if block.type == "thinking":
                         thinking_content = block.thinking
                     elif block.type == "text":
                         text_response += block.text
 
+                # Get token usage
+                input_tokens = response.usage.input_tokens
+                output_tokens = response.usage.output_tokens
+
+                # Calculate cost
+                cost = calculate_cost(input_tokens, output_tokens)
+
                 logger.info(f"Claude API call successful ({execution_time}ms)")
+                logger.info(f"  TOKENS: input={input_tokens}, output={output_tokens}")
+                logger.info(f"  COST: input=${cost['input_cost']:.6f}, output=${cost['output_cost']:.6f}, total=${cost['total_cost']:.6f}")
 
                 return {
                     "response": text_response,
                     "thinking": thinking_content,
                     "execution_time_ms": execution_time,
                     "model": self.model,
-                    "input_tokens": response.usage.input_tokens,
-                    "output_tokens": response.usage.output_tokens
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "cost": cost
                 }
 
             except anthropic.APIError as e:
@@ -148,7 +188,8 @@ class ClaudeClient:
                     }
                 ]
 
-                response = self.client.messages.create(
+                # Use streaming for long requests
+                with self.client.messages.stream(
                     model=self.model,
                     max_tokens=self.max_tokens,
                     thinking={
@@ -160,7 +201,8 @@ class ClaudeClient:
                     messages=[
                         {"role": "user", "content": content}
                     ]
-                )
+                ) as stream:
+                    response = stream.get_final_message()
 
                 execution_time = int((time.time() - start_time) * 1000)
 
@@ -174,15 +216,23 @@ class ClaudeClient:
                     elif block.type == "text":
                         text_response += block.text
 
+                # Calculate cost
+                input_tokens = response.usage.input_tokens
+                output_tokens = response.usage.output_tokens
+                cost = calculate_cost(input_tokens, output_tokens)
+
                 logger.info(f"Claude vision API call successful ({execution_time}ms)")
+                logger.info(f"  TOKENS: input={input_tokens}, output={output_tokens}")
+                logger.info(f"  COST: input=${cost['input_cost']:.6f}, output=${cost['output_cost']:.6f}, total=${cost['total_cost']:.6f}")
 
                 return {
                     "response": text_response,
                     "thinking": thinking_content,
                     "execution_time_ms": execution_time,
                     "model": self.model,
-                    "input_tokens": response.usage.input_tokens,
-                    "output_tokens": response.usage.output_tokens
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "cost": cost
                 }
 
             except anthropic.APIError as e:
@@ -236,7 +286,8 @@ class ClaudeClient:
                     "text": user_prompt
                 })
 
-                response = self.client.messages.create(
+                # Use streaming for long requests
+                with self.client.messages.stream(
                     model=self.model,
                     max_tokens=self.max_tokens,
                     thinking={
@@ -248,7 +299,8 @@ class ClaudeClient:
                     messages=[
                         {"role": "user", "content": content}
                     ]
-                )
+                ) as stream:
+                    response = stream.get_final_message()
 
                 execution_time = int((time.time() - start_time) * 1000)
 
@@ -261,15 +313,23 @@ class ClaudeClient:
                     elif block.type == "text":
                         text_response += block.text
 
+                # Calculate cost
+                input_tokens = response.usage.input_tokens
+                output_tokens = response.usage.output_tokens
+                cost = calculate_cost(input_tokens, output_tokens)
+
                 logger.info(f"Claude multi-image API call successful ({execution_time}ms, {len(images)} images)")
+                logger.info(f"  TOKENS: input={input_tokens}, output={output_tokens}")
+                logger.info(f"  COST: input=${cost['input_cost']:.6f}, output=${cost['output_cost']:.6f}, total=${cost['total_cost']:.6f}")
 
                 return {
                     "response": text_response,
                     "thinking": thinking_content,
                     "execution_time_ms": execution_time,
                     "model": self.model,
-                    "input_tokens": response.usage.input_tokens,
-                    "output_tokens": response.usage.output_tokens
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "cost": cost
                 }
 
             except anthropic.APIError as e:
