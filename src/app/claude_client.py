@@ -7,8 +7,17 @@ Uses Claude Opus 4.5 model
 import anthropic
 import json
 import logging
+import sys
 import time
 from typing import Dict, Any, Optional, List
+
+# Add AI monitoring library to path
+sys.path.insert(0, "/home/.ai_monitoring/lib")
+try:
+    from ai_usage_logger import AIUsageLogger
+    AI_LOGGING_ENABLED = True
+except ImportError:
+    AI_LOGGING_ENABLED = False
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +71,34 @@ class ClaudeClient:
         self.model = model
         self.max_tokens = max_tokens
         self.thinking_budget = thinking_budget
+
+        # Initialize AI usage logger
+        if AI_LOGGING_ENABLED:
+            self.usage_logger = AIUsageLogger(app_name="SAT_Forum_Responder")
+            logger.info("AI usage logging enabled")
+        else:
+            self.usage_logger = None
+            logger.warning("AI usage logging not available")
+
         logger.info(f"Claude client initialized with model: {model}")
+
+    def _log_usage(self, purpose: str, input_tokens: int, output_tokens: int,
+                   execution_time: int, success: bool = True, error: str = None):
+        """Log AI usage to centralized monitoring system"""
+        if self.usage_logger:
+            try:
+                self.usage_logger.log_call(
+                    model=self.model,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    purpose=purpose,
+                    latency_ms=execution_time,
+                    success=success,
+                    error=error,
+                    thinking_enabled=True
+                )
+            except Exception as e:
+                logger.warning(f"Failed to log AI usage: {e}")
 
     def call_agent(
         self,
@@ -126,6 +162,9 @@ class ClaudeClient:
                 logger.info(f"  TOKENS: input={input_tokens}, output={output_tokens}")
                 logger.info(f"  COST: input=${cost['input_cost']:.6f}, output=${cost['output_cost']:.6f}, total=${cost['total_cost']:.6f}")
 
+                # Log to centralized monitoring
+                self._log_usage("text_query", input_tokens, output_tokens, execution_time)
+
                 return {
                     "response": text_response,
                     "thinking": thinking_content,
@@ -138,6 +177,8 @@ class ClaudeClient:
 
             except anthropic.APIError as e:
                 logger.error(f"Claude API error (attempt {attempt + 1}): {e}")
+                if attempt >= 1:
+                    self._log_usage("text_query", 0, 0, 0, success=False, error=str(e))
                 if attempt < retry_count - 1:
                     time.sleep(3 * (attempt + 1))  # Exponential backoff
             except Exception as e:
@@ -225,6 +266,9 @@ class ClaudeClient:
                 logger.info(f"  TOKENS: input={input_tokens}, output={output_tokens}")
                 logger.info(f"  COST: input=${cost['input_cost']:.6f}, output=${cost['output_cost']:.6f}, total=${cost['total_cost']:.6f}")
 
+                # Log to centralized monitoring
+                self._log_usage("vision_single", input_tokens, output_tokens, execution_time)
+
                 return {
                     "response": text_response,
                     "thinking": thinking_content,
@@ -237,6 +281,8 @@ class ClaudeClient:
 
             except anthropic.APIError as e:
                 logger.error(f"Claude vision API error (attempt {attempt + 1}): {e}")
+                if attempt >= 1:
+                    self._log_usage("vision_single", 0, 0, 0, success=False, error=str(e))
                 if attempt < retry_count - 1:
                     time.sleep(3 * (attempt + 1))
             except Exception as e:
@@ -322,6 +368,9 @@ class ClaudeClient:
                 logger.info(f"  TOKENS: input={input_tokens}, output={output_tokens}")
                 logger.info(f"  COST: input=${cost['input_cost']:.6f}, output=${cost['output_cost']:.6f}, total=${cost['total_cost']:.6f}")
 
+                # Log to centralized monitoring
+                self._log_usage("vision_multi", input_tokens, output_tokens, execution_time)
+
                 return {
                     "response": text_response,
                     "thinking": thinking_content,
@@ -334,6 +383,8 @@ class ClaudeClient:
 
             except anthropic.APIError as e:
                 logger.error(f"Claude multi-image API error (attempt {attempt + 1}): {e}")
+                if attempt >= 1:
+                    self._log_usage("vision_multi", 0, 0, 0, success=False, error=str(e))
                 if attempt < retry_count - 1:
                     time.sleep(3 * (attempt + 1))
             except Exception as e:
