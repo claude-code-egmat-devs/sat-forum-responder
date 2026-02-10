@@ -154,8 +154,39 @@ def init_database():
     except sqlite3.OperationalError:
         pass
 
+    try:
+        cursor.execute('ALTER TABLE webhooks ADD COLUMN quality_score INTEGER')
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        cursor.execute('ALTER TABLE webhooks ADD COLUMN sub_classification TEXT')
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        cursor.execute('ALTER TABLE webhooks ADD COLUMN hil_reason TEXT')
+    except sqlite3.OperationalError:
+        pass
+
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_correlation_id ON webhooks(correlation_id)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_status ON webhooks(status)')
+
+    # Create webhook_metadata table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS webhook_metadata (
+            correlation_id TEXT PRIMARY KEY,
+            discussion_id TEXT,
+            entity_name TEXT,
+            entity_id TEXT,
+            platform_name TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            posted_by TEXT,
+            forum_post_subject TEXT,
+            forum_post_text TEXT
+        )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_metadata_platform ON webhook_metadata(platform_name)')
 
     conn.commit()
     conn.close()
@@ -180,6 +211,35 @@ def save_webhook_received(correlation_id: str, request_ip: str, headers: dict) -
     except Exception as e:
         logger.error(f"Error saving webhook: {e}")
         return -1
+
+
+def save_webhook_metadata(correlation_id: str, forum_data: dict):
+    """Save forum context metadata to webhook_metadata table.
+    Safely handles missing/null fields - never breaks on bad data.
+    This is non-fatal: if it fails, the main webhook flow continues."""
+    try:
+        conn = sqlite3.connect(str(config.WEBHOOK_DB_PATH))
+        cursor = conn.cursor()
+
+        discussion_id = str(forum_data.get('discussionId') or '') or None
+        entity_name = str(forum_data.get('entityName') or '') or None
+        entity_id = str(forum_data.get('entityId') or '') or None
+        platform_name = str(forum_data.get('platformName') or '') or None
+        posted_by = str(forum_data.get('postedBy') or forum_data.get('parentPostedBy') or '') or None
+        forum_post_subject = str(forum_data.get('forumPostSubject') or '') or None
+        forum_post_text = str(forum_data.get('forumPostText') or forum_data.get('ForumPostText') or '') or None
+
+        cursor.execute('''
+            INSERT OR REPLACE INTO webhook_metadata
+                (correlation_id, discussion_id, entity_name, entity_id, platform_name, posted_by, forum_post_subject, forum_post_text)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (correlation_id, discussion_id, entity_name, entity_id, platform_name, posted_by, forum_post_subject, forum_post_text))
+
+        conn.commit()
+        conn.close()
+        logger.info(f"[{correlation_id}] Saved webhook metadata (entity={entity_name}, discussion={discussion_id})")
+    except Exception as e:
+        logger.error(f"[{correlation_id}] Error saving webhook metadata (non-fatal): {e}")
 
 
 def update_webhook_status(correlation_id: str, status: str, **kwargs):
@@ -264,6 +324,9 @@ def process_webhook_background(forum_data: dict, correlation_id: str):
 
         from .forum_processor import ForumProcessor
 
+        # Save metadata (non-fatal)
+        save_webhook_metadata(correlation_id, forum_data)
+
         processor = ForumProcessor()
         results = processor.process_forum_post(forum_data)
 
@@ -296,7 +359,10 @@ def process_webhook_background(forum_data: dict, correlation_id: str):
             processing_time_ms=processing_time_ms,
             forum_post_status=save_status.get('forum_post_status'),
             forum_post_error=save_status.get('forum_post_error'),
-            images_transcribed=images_transcribed
+            images_transcribed=images_transcribed,
+            quality_score=save_status.get('quality_score'),
+            sub_classification=save_status.get('sub_classification'),
+            hil_reason=save_status.get('hil_reason')
         )
 
         logger.info(f"Completed processing for {correlation_id} in {processing_time_ms}ms - Status: {results.get('processing_status')}, Forum: {save_status.get('forum_post_status')}, Images: {images_transcribed}")
@@ -480,6 +546,11 @@ def reprocess_by_correlation_id(correlation_id: str):
     4. Post response to forum
     """
     try:
+        # Check for dry_run query parameter
+        dry_run = request.args.get('dry_run', 'false').lower() == 'true'
+        if dry_run:
+            logger.info(f"[REPROCESS] DRY-RUN mode enabled for: {correlation_id}")
+
         logger.info(f"[REPROCESS] Starting reprocess for: {correlation_id}")
 
         neuron_config = config.get_neuron_get_api_config()
@@ -522,6 +593,9 @@ def reprocess_by_correlation_id(correlation_id: str):
         # Save to DB as received
         save_webhook_received(correlation_id, 'reprocess', {})
 
+        # Save metadata (non-fatal)
+        save_webhook_metadata(correlation_id, forum_data)
+
         # Step 2: Process through the pipeline
         from .forum_processor import ForumProcessor
 
@@ -533,7 +607,7 @@ def reprocess_by_correlation_id(correlation_id: str):
         processing_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
 
         # Step 3 & 4: Save to Airtable and post to forum
-        save_status = processor.save_results(results)
+        save_status = processor.save_results(results, dry_run=dry_run)
 
         # Update DB status
         images_transcribed = results.get("image_processing_stats", {}).get("total_images", 0)
@@ -544,7 +618,10 @@ def reprocess_by_correlation_id(correlation_id: str):
             processing_time_ms=processing_time_ms,
             forum_post_status=save_status.get('forum_post_status'),
             forum_post_error=save_status.get('forum_post_error'),
-            images_transcribed=images_transcribed
+            images_transcribed=images_transcribed,
+            quality_score=save_status.get('quality_score'),
+            sub_classification=save_status.get('sub_classification'),
+            hil_reason=save_status.get('hil_reason')
         )
 
         logger.info(f"[REPROCESS] Completed for {correlation_id} in {processing_time_ms}ms - Status: {results.get('processing_status')}, Forum: {save_status.get('forum_post_status')}")
@@ -558,7 +635,8 @@ def reprocess_by_correlation_id(correlation_id: str):
             'forum_post_status': save_status.get('forum_post_status'),
             'airtable_saved': save_status.get('airtable_saved'),
             'processing_time_ms': processing_time_ms,
-            'images_transcribed': images_transcribed
+            'images_transcribed': images_transcribed,
+            'quality_score': save_status.get('quality_score')
         }), 200
 
     except Exception as e:

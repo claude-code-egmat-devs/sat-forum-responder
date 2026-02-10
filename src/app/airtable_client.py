@@ -15,14 +15,17 @@ logger = logging.getLogger(__name__)
 class AirtableClient:
     """Client for interacting with Airtable API"""
 
-    def __init__(self, api_key: str, base_id: str, table_name: str):
-        """Initialize Airtable client"""
+    def __init__(self, api_key: str, base_id: str, table_name: str, agent_outputs_table: str = ""):
+        """Initialize Airtable client with support for two tables"""
         self.api_key = api_key
         self.base_id = base_id
         self.table_name = table_name
         self.base_url = f"https://api.airtable.com/v0/{base_id}/{table_name}"
         # Agent System Outputs table URL
-        self.agent_outputs_url = f"https://api.airtable.com/v0/{base_id}/Agent%20System%20Outputs"
+        if agent_outputs_table:
+            self.agent_outputs_url = f"https://api.airtable.com/v0/{base_id}/{agent_outputs_table}"
+        else:
+            self.agent_outputs_url = f"https://api.airtable.com/v0/{base_id}/Agent%20System%20Outputs"
         self.headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
@@ -128,20 +131,36 @@ class AirtableClient:
 
         existing_record = self.find_by_correlation_id(correlation_id)
 
-        # SAT Forum Posts field mappings (without agent outputs)
+        # SAT Forum Posts field mappings
         fields = {
             "Forum_Corr_ID": data.get("correlation_id"),
             "postedBy": data.get("posted_by"),
+            "parentPostedBy": data.get("parent_posted_by"),
             "forumPostSubject": data.get("forum_post_subject"),
             "ForumPostText": data.get("forum_post_text"),
             "parentPostQuery": data.get("parent_post_query"),
             "parentPostResponse": data.get("parent_post_response"),
             "isImageBase64Encoded": str(data.get("image_base64_encoded", "")),
+            "entityName": data.get("entity_name"),
+            "entityId": str(data.get("entity_id", "")) if data.get("entity_id") else None,
+            "platformName": data.get("platform_name"),
+            "courseName": data.get("course_name"),
+            "forumId": str(data.get("forum_id", "")) if data.get("forum_id") else None,
+            "parentId": str(data.get("parent_id", "")) if data.get("parent_id") else None,
             "type": data.get("post_type"),
             "environment": data.get("environment"),
             "classification": data.get("classification"),
+            "subClassification": data.get("sub_classification"),
+            "classificationJustification": data.get("classification_justification"),
+            "expertReply": data.get("expert_reply"),
+            "expertReplyHtml": data.get("expert_reply_html"),
             "response": data.get("expert_reply_html"),
-            "url_check": data.get("url_check", "false")
+            "url_check": data.get("url_check", "false"),
+            "urls_list": data.get("urls_list"),
+            "images_transcribed": data.get("images_transcribed"),
+            "qualityScore": data.get("quality_score"),
+            "validationDetails": data.get("validation_details"),
+            "requestReceivedAt": data.get("request_received_at"),
         }
 
         # Remove None values

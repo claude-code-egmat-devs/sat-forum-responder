@@ -96,7 +96,16 @@ class Config:
 
     @staticmethod
     def get_airtable_config():
-        return Config._load_api_keys().get('airtable', {})
+        airtable_config = Config._load_api_keys().get('airtable', {})
+        # Ensure agent_outputs_table is available
+        if 'agent_outputs_table' not in airtable_config:
+            airtable_config['agent_outputs_table'] = 'Agent%20System%20Outputs'
+        return airtable_config
+
+    @staticmethod
+    def get_dry_run():
+        """Check if dry_run mode is enabled in config"""
+        return Config._load_api_keys().get('dry_run', False)
 
     @staticmethod
     def get_forum_post_api_config():
