@@ -24,7 +24,7 @@ _vote_cache = {"data": None, "ts": 0}  # single cache for all vote events
 _VOTE_CACHE_TTL = 300  # 5 minutes
 
 # Usernames to exclude from dashboard (test accounts)
-_TEST_USERS = ()
+_TEST_USERS = ("sujeev.testing",)
 
 
 def _dedup_join(alias="w"):
