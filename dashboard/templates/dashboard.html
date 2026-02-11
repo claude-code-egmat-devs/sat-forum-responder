@@ -1,0 +1,1448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SAT Forum Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background: #f8fafc; }
+        .card {
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 1rem;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+        }
+        .card:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.08); }
+        .stat-number { font-variant-numeric: tabular-nums; }
+        .spinner { animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #f1f5f9; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+        .query-table th { position: sticky; top: 0; background: #ffffff; z-index: 1; }
+
+        /* Modal styles */
+        .modal-overlay {
+            position: fixed; inset: 0; z-index: 50;
+            background: rgba(0,0,0,0.5); backdrop-filter: blur(4px);
+            display: none; align-items: center; justify-content: center;
+            padding: 1rem;
+        }
+        .modal-overlay.active { display: flex; }
+        .modal-card {
+            background: #fff; border-radius: 1rem; box-shadow: 0 25px 50px rgba(0,0,0,0.2);
+            max-width: 700px; width: 100%; max-height: 90vh; display: flex; flex-direction: column;
+        }
+        .modal-header {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 1.25rem 1.5rem; border-bottom: 1px solid #e2e8f0;
+            position: sticky; top: 0; background: #fff; border-radius: 1rem 1rem 0 0; z-index: 1;
+        }
+        .modal-body { padding: 1.5rem; overflow-y: auto; }
+        .modal-close {
+            width: 32px; height: 32px; border-radius: 8px; border: none; cursor: pointer;
+            background: #f1f5f9; color: #64748b; font-size: 18px; display: flex;
+            align-items: center; justify-content: center; transition: background 0.15s;
+        }
+        .modal-close:hover { background: #e2e8f0; }
+
+        /* Workflow timeline */
+        .wf-step { display: flex; align-items: flex-start; gap: 0.75rem; position: relative; padding-bottom: 1rem; }
+        .wf-step:last-child { padding-bottom: 0; }
+        .wf-step:not(:last-child)::after {
+            content: ''; position: absolute; left: 9px; top: 22px; bottom: 0;
+            width: 2px; background: #e2e8f0;
+        }
+        .wf-dot {
+            width: 20px; height: 20px; border-radius: 50%; flex-shrink: 0;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 10px; color: #fff; z-index: 1;
+        }
+        .wf-dot.completed { background: #059669; }
+        .wf-dot.failed { background: #dc2626; }
+        .wf-dot.skipped { background: #d97706; }
+        .wf-dot.hil { background: #ea580c; }
+
+        .clickable-row { cursor: pointer; }
+        .clickable-card { cursor: pointer; transition: transform 0.15s, box-shadow 0.15s; }
+        .clickable-card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.1); }
+
+        /* List modal */
+        .list-modal-overlay {
+            position: fixed; inset: 0; z-index: 50;
+            background: rgba(0,0,0,0.5); backdrop-filter: blur(4px);
+            display: none; align-items: center; justify-content: center;
+            padding: 1rem;
+        }
+        .list-modal-overlay.active { display: flex; }
+        .list-modal-card {
+            background: #fff; border-radius: 1rem; box-shadow: 0 25px 50px rgba(0,0,0,0.2);
+            max-width: 900px; width: 100%; max-height: 90vh; display: flex; flex-direction: column;
+        }
+        .list-modal-header {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 1.25rem 1.5rem; border-bottom: 1px solid #e2e8f0;
+            position: sticky; top: 0; background: #fff; border-radius: 1rem 1rem 0 0; z-index: 1;
+        }
+        .list-modal-body { padding: 1rem 1.5rem; overflow-y: auto; }
+        .clickable-row:hover { background: rgba(234, 88, 12, 0.04) !important; }
+    </style>
+</head>
+<body class="min-h-screen text-gray-800 p-4 md:p-6">
+
+    <!-- Header -->
+    <header class="max-w-7xl mx-auto mb-6">
+        <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+            <div>
+                <h1 class="text-3xl font-bold bg-gradient-to-r from-orange-600 to-amber-600 bg-clip-text text-transparent">
+                    SAT Forum Dashboard
+                </h1>
+                <p class="text-gray-400 text-sm mt-1">Forum Responder System Monitoring</p>
+            </div>
+            <div class="flex items-center gap-3">
+                <!-- Date Range -->
+                <select id="dateRange" class="bg-white border border-gray-300 text-gray-700 text-sm rounded-lg px-3 py-2 focus:ring-orange-500 focus:border-orange-500" onchange="onDateRangeChange()">
+                    <option value="all">All Time</option>
+                    <option value="1" selected>Last 24 Hours</option>
+                    <option value="7">Last 7 Days</option>
+                    <option value="14">Last 14 Days</option>
+                    <option value="30">Last 30 Days</option>
+                    <option value="90">Last 90 Days</option>
+                </select>
+                <!-- Refresh -->
+                <button id="refreshBtn" onclick="refreshData(true)" class="bg-white border border-gray-300 text-gray-700 rounded-lg px-3 py-2 hover:bg-gray-50 transition flex items-center gap-2 text-sm">
+                    <svg id="refreshIcon" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                    </svg>
+                    Refresh
+                </button>
+                <!-- Status -->
+                <span id="lastUpdated" class="text-xs text-gray-400"></span>
+                <span id="countdownTimer" class="text-xs font-mono text-orange-600 bg-orange-50 px-2 py-0.5 rounded-full"></span>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto space-y-6">
+
+        <!-- Summary Cards -->
+        <section id="summaryCards" class="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div class="card p-5 text-center bg-orange-50 border-orange-200">
+                <div class="stat-number text-3xl font-bold text-orange-600" id="totalQueries">--</div>
+                <div class="text-xs text-gray-500 uppercase tracking-wider mt-1">Queries</div>
+            </div>
+            <div class="card p-5 text-center clickable-card bg-orange-50 border-orange-200" onclick="openListModal('hil')" title="Click to view all HIL queries">
+                <div class="stat-number text-3xl font-bold text-orange-500" id="hilCount">--</div>
+                <div class="text-xs text-gray-500 uppercase tracking-wider mt-1">HIL</div>
+                <div class="text-xs text-gray-500 mt-0.5" id="hilPct"></div>
+            </div>
+            <div class="card p-5 text-center clickable-card bg-red-50 border-red-200" onclick="openListModal('error')" title="Click to view all Error queries">
+                <div class="stat-number text-3xl font-bold text-red-500" id="errorCount">--</div>
+                <div class="text-xs text-gray-500 uppercase tracking-wider mt-1">Errors</div>
+                <div class="text-xs text-gray-500 mt-0.5" id="errorPct"></div>
+            </div>
+            <div class="card p-5 text-center bg-green-50 border-green-200">
+                <div class="stat-number text-3xl font-bold text-green-600" id="completedCount">--</div>
+                <div class="text-xs text-gray-500 uppercase tracking-wider mt-1">Completed</div>
+            </div>
+        </section>
+
+        <!-- Upvote and Downvote Count (Mixpanel) -->
+        <section class="card p-5">
+            <div class="flex items-center gap-2 mb-4">
+                <h3 class="text-sm font-semibold text-gray-500 uppercase tracking-wider">Upvote and Downvote Count</h3>
+                <span class="text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full">Mixpanel</span>
+            </div>
+            <div class="grid grid-cols-2 gap-4">
+                <div class="bg-emerald-50 border border-emerald-200 rounded-lg p-5 text-center">
+                    <div id="upvoteCount" class="text-2xl font-bold text-emerald-600 stat-number">--</div>
+                    <div class="text-xs text-gray-500 uppercase tracking-wider mt-1">Net Upvotes</div>
+                </div>
+                <div class="bg-red-50 border border-red-200 rounded-lg p-5 text-center">
+                    <div id="downvoteCount" class="text-2xl font-bold text-red-500 stat-number">--</div>
+                    <div class="text-xs text-gray-500 uppercase tracking-wider mt-1">Net Downvotes</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Charts Row 1: Classification + Processing Status -->
+        <section class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div class="card p-5">
+                <h3 class="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4">Classification</h3>
+                <div class="flex items-center justify-center" style="height: 260px;">
+                    <canvas id="classificationChart"></canvas>
+                </div>
+                <div id="classificationLegend" class="mt-3 space-y-1 text-xs text-gray-500"></div>
+            </div>
+            <div class="card p-5">
+                <h3 class="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4">Processing Status</h3>
+                <div class="flex items-center justify-center" style="height: 260px;">
+                    <canvas id="statusChart"></canvas>
+                </div>
+                <div id="statusLegend" class="mt-3 space-y-1 text-xs text-gray-500"></div>
+            </div>
+        </section>
+
+        <!-- Charts Row 2: Forum Post Status + Daily Volume -->
+        <section class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div class="card p-5">
+                <h3 class="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4">Forum Post Status</h3>
+                <div style="height: 280px;">
+                    <canvas id="forumPostChart"></canvas>
+                </div>
+            </div>
+            <div class="card p-5">
+                <h3 class="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4">Query Volume (Daily)</h3>
+                <div style="height: 280px;">
+                    <canvas id="dailyVolumeChart"></canvas>
+                </div>
+            </div>
+        </section>
+
+        <!-- Recent Queries Table -->
+        <section class="card p-5">
+            <h3 class="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4">Recent Queries</h3>
+            <div class="overflow-x-auto max-h-[500px] overflow-y-auto">
+                <table class="query-table w-full text-xs text-left">
+                    <thead>
+                        <tr class="text-gray-400 border-b border-gray-200">
+                            <th class="px-3 py-2">ID</th>
+                            <th class="px-3 py-2">Time</th>
+                            <th class="px-3 py-2">Entity</th>
+                            <th class="px-3 py-2">Classification</th>
+                            <th class="px-3 py-2">Status</th>
+                            <th class="px-3 py-2">Forum</th>
+                            <th class="px-3 py-2">Processing</th>
+                            <th class="px-3 py-2 w-16"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="queriesTableBody" class="text-gray-600">
+                        <tr><td colspan="8" class="px-3 py-8 text-center text-gray-400">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- Query Detail Modal -->
+        <div id="queryModal" class="modal-overlay" onclick="if(event.target===this)closeModal()">
+            <div class="modal-card">
+                <div class="modal-header">
+                    <h2 class="text-sm font-semibold text-gray-700 uppercase tracking-wider">Query Detail</h2>
+                    <button class="modal-close" onclick="closeModal()">&times;</button>
+                </div>
+                <div class="modal-body" id="modalBody">
+                    <div class="text-center text-gray-400 py-8">Loading...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- List Drill-Down Modal -->
+        <div id="listModal" class="list-modal-overlay" onclick="if(event.target===this)closeListModal()">
+            <div class="list-modal-card">
+                <div class="list-modal-header">
+                    <h2 class="text-sm font-semibold text-gray-700 uppercase tracking-wider" id="listModalTitle">Queries</h2>
+                    <button class="modal-close" onclick="closeListModal()">&times;</button>
+                </div>
+                <div class="list-modal-body" id="listModalBody">
+                    <div class="text-center text-gray-400 py-8">Loading...</div>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <footer class="max-w-7xl mx-auto mt-8 mb-4 text-center text-xs text-gray-400">
+        SAT Forum Dashboard &middot; Cache: 15 min
+    </footer>
+
+    <script>
+        // ── Config ──
+        const API_BASE = "{{ prefix }}";
+        let refreshTimer = null;
+        let charts = {};
+
+        // ── Raw data cache (single set of all rows) ──
+        const RAW_CACHE_KEY = 'sat_dash_raw';
+        const RAW_CACHE_TTL = 15 * 60 * 1000; // 15 minutes
+        let _cachedRawRows = null; // in-memory for instant access
+
+        function saveRawCache(rows) {
+            _cachedRawRows = rows;
+            try {
+                localStorage.setItem(RAW_CACHE_KEY, JSON.stringify({ rows: rows, ts: Date.now() }));
+            } catch (e) { console.warn('Raw cache write failed:', e); }
+        }
+
+        function getRawCache() {
+            // In-memory first
+            if (_cachedRawRows) return _cachedRawRows;
+            // localStorage fallback
+            try {
+                const raw = localStorage.getItem(RAW_CACHE_KEY);
+                if (!raw) return null;
+                const entry = JSON.parse(raw);
+                if (Date.now() - entry.ts > RAW_CACHE_TTL) return null;
+                _cachedRawRows = entry.rows;
+                return entry.rows;
+            } catch (e) { return null; }
+        }
+
+        function getRawCacheTimestamp() {
+            try {
+                const raw = localStorage.getItem(RAW_CACHE_KEY);
+                if (!raw) return null;
+                return JSON.parse(raw).ts;
+            } catch (e) { return null; }
+        }
+
+        function getStaleRawCache() {
+            try {
+                const raw = localStorage.getItem(RAW_CACHE_KEY);
+                if (!raw) return null;
+                const entry = JSON.parse(raw);
+                _cachedRawRows = entry.rows;
+                return entry.rows;
+            } catch (e) { return null; }
+        }
+
+        function formatCacheAge(tsMs) {
+            const ageMin = Math.round((Date.now() - tsMs) / 60000);
+            if (ageMin < 1) return 'just now';
+            return ageMin + 'm ago';
+        }
+
+        // ── Vote events cache (Mixpanel, all-time) ──
+        const VOTE_CACHE_KEY = 'sat_dash_votes';
+        let _cachedVoteEvents = null;
+
+        function saveVoteCache(events) {
+            _cachedVoteEvents = events;
+            try {
+                localStorage.setItem(VOTE_CACHE_KEY, JSON.stringify({ events: events, ts: Date.now() }));
+            } catch (e) { console.warn('Vote cache write failed:', e); }
+        }
+
+        function getVoteCache() {
+            if (_cachedVoteEvents) return _cachedVoteEvents;
+            try {
+                var raw = localStorage.getItem(VOTE_CACHE_KEY);
+                if (!raw) return null;
+                var entry = JSON.parse(raw);
+                if (Date.now() - entry.ts > RAW_CACHE_TTL) return null;
+                _cachedVoteEvents = entry.events;
+                return entry.events;
+            } catch (e) { return null; }
+        }
+
+        function getStaleVoteCache() {
+            try {
+                var raw = localStorage.getItem(VOTE_CACHE_KEY);
+                if (!raw) return null;
+                var entry = JSON.parse(raw);
+                _cachedVoteEvents = entry.events;
+                return entry.events;
+            } catch (e) { return null; }
+        }
+
+        function computeVoteStats(events, filterDays) {
+            if (!events || events.length === 0) return { upvotes: 0, downvotes: 0 };
+            var filtered = events;
+            if (filterDays !== 'all') {
+                var days = parseInt(filterDays);
+                var cutoffTs = Math.floor(Date.now() / 1000) - (days * 24 * 60 * 60);
+                filtered = events.filter(function(e) { return e.ts >= cutoffTs; });
+            }
+            var upVoted = 0, upRemoved = 0, downVoted = 0, downRemoved = 0;
+            for (var i = 0; i < filtered.length; i++) {
+                var ev = filtered[i];
+                if (ev.type === 'up') {
+                    if (ev.action === 'Voted') upVoted++;
+                    else if (ev.action === 'Removed') upRemoved++;
+                } else {
+                    if (ev.action === 'Voted') downVoted++;
+                    else if (ev.action === 'Removed') downRemoved++;
+                }
+            }
+            return {
+                upvotes: Math.max(0, upVoted - upRemoved),
+                downvotes: Math.max(0, downVoted - downRemoved),
+            };
+        }
+
+        // Clean up old per-filter cache keys from previous version
+        try {
+            Object.keys(localStorage).forEach(function(k) {
+                if (k.startsWith('sat_dash_') && k !== RAW_CACHE_KEY && k !== VOTE_CACHE_KEY) {
+                    localStorage.removeItem(k);
+                }
+            });
+        } catch(e) {}
+
+        // ── Countdown timer ──
+        let _lastFetchTs = null;
+        let _countdownInterval = null;
+
+        function startCountdown(baseTsMs) {
+            _lastFetchTs = baseTsMs;
+            if (_countdownInterval) clearInterval(_countdownInterval);
+            updateCountdownDisplay();
+            _countdownInterval = setInterval(updateCountdownDisplay, 1000);
+        }
+
+        function updateCountdownDisplay() {
+            const el = document.getElementById('countdownTimer');
+            if (!_lastFetchTs) { el.textContent = ''; return; }
+            const elapsed = Date.now() - _lastFetchTs;
+            const remaining = Math.max(0, RAW_CACHE_TTL - elapsed);
+            if (remaining <= 0) {
+                el.textContent = 'Refreshing...';
+                return;
+            }
+            const mins = Math.floor(remaining / 60000);
+            const secs = Math.floor((remaining % 60000) / 1000);
+            el.textContent = mins + ':' + String(secs).padStart(2, '0');
+        }
+
+        // ── Color palettes ──
+        const COLORS = {
+            classification: ['#0891b2','#7c3aed','#d97706','#059669','#db2777','#2563eb','#ea580c','#4f46e5'],
+            status: ['#059669','#ea580c','#dc2626','#7c3aed','#2563eb','#d97706','#db2777'],
+            forumPost: ['#7c3aed','#64748b','#d97706','#dc2626','#2563eb'],
+            daily: { total: '#0891b2', completed: '#059669', hil: '#ea580c', errors: '#dc2626' },
+        };
+
+        // ── Utility ──
+        function formatLabel(s) {
+            if (!s) return 'Unknown';
+            return s.replace(/_/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); });
+        }
+
+        function formatTime(ms) {
+            if (!ms) return '--';
+            if (ms < 1000) return ms + 'ms';
+            return (ms / 1000).toFixed(1) + 's';
+        }
+
+        function formatDate(d) {
+            if (!d) return '--';
+            return d.replace('T', ' ').substring(0, 16);
+        }
+
+        function escapeHtml(s) {
+            if (!s) return '';
+            return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        }
+
+        function statusBadge(status) {
+            const colors = {
+                completed: 'bg-green-100 text-green-700',
+                error: 'bg-red-100 text-red-700',
+                hil_exception: 'bg-orange-100 text-orange-700',
+                hil_concept: 'bg-orange-100 text-orange-700',
+                pending: 'bg-blue-100 text-blue-700',
+            };
+            const cls = colors[status] || 'bg-gray-100 text-gray-600';
+            return '<span class="px-2 py-0.5 rounded-full text-[10px] font-medium ' + cls + '">' + formatLabel(status) + '</span>';
+        }
+
+        function forumBadge(status) {
+            const colors = {
+                posted: 'bg-violet-100 text-violet-700',
+                skipped_hil: 'bg-gray-100 text-gray-600',
+                skipped: 'bg-gray-100 text-gray-600',
+                skipped_validation: 'bg-amber-100 text-amber-700',
+                skipped_quality: 'bg-amber-100 text-amber-700',
+                skipped_quality_hil: 'bg-amber-100 text-amber-700',
+                skipped_dry_run: 'bg-gray-100 text-gray-600',
+                failed: 'bg-red-100 text-red-700',
+            };
+            const cls = colors[status] || 'bg-gray-100 text-gray-600';
+            return '<span class="px-2 py-0.5 rounded-full text-[10px] font-medium ' + cls + '">' + formatLabel(status || 'None') + '</span>';
+        }
+
+        function isNonPosted(forumPostStatus) {
+            return forumPostStatus && forumPostStatus !== 'posted';
+        }
+
+        // ── Client-side date filtering ──
+        function getFilterDays() {
+            return document.getElementById('dateRange').value;
+        }
+
+        function filterRowsByDate(rows, filterDays) {
+            if (filterDays === 'all') return rows;
+            const days = parseInt(filterDays);
+            const now = new Date();
+            const cutoff = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+            const cutoffStr = cutoff.toISOString().split('T')[0];
+            return rows.filter(function(r) {
+                if (!r.received_at) return false;
+                return r.received_at.substring(0, 10) >= cutoffStr;
+            });
+        }
+
+        // ── Client-side aggregation functions ──
+        function computeSummary(rows) {
+            var total = rows.length;
+            var hil = 0, errors = 0, completed = 0;
+            for (var i = 0; i < rows.length; i++) {
+                var s = rows[i].status;
+                if (s === 'hil_exception' || s === 'hil_concept') hil++;
+                else if (s === 'error') errors++;
+                if (s === 'completed') completed++;
+            }
+            return {
+                total_queries: total,
+                hil_count: hil,
+                hil_pct: total > 0 ? Math.round(hil / total * 1000) / 10 : 0,
+                error_count: errors,
+                error_pct: total > 0 ? Math.round(errors / total * 1000) / 10 : 0,
+                completed: completed,
+            };
+        }
+
+        function computeClassification(rows) {
+            var counts = {};
+            for (var i = 0; i < rows.length; i++) {
+                var c = rows[i].classification || 'Unknown';
+                counts[c] = (counts[c] || 0) + 1;
+            }
+            var result = [];
+            for (var k in counts) result.push({ classification: k, count: counts[k] });
+            result.sort(function(a, b) { return b.count - a.count; });
+            return result;
+        }
+
+        function computeStatus(rows) {
+            var counts = {};
+            for (var i = 0; i < rows.length; i++) {
+                var s = rows[i].status || 'unknown';
+                counts[s] = (counts[s] || 0) + 1;
+            }
+            var result = [];
+            for (var k in counts) result.push({ status: k, count: counts[k] });
+            result.sort(function(a, b) { return b.count - a.count; });
+            return result;
+        }
+
+        function computeForumPostStatus(rows) {
+            var counts = {};
+            for (var i = 0; i < rows.length; i++) {
+                var fps = rows[i].forum_post_status || 'none';
+                counts[fps] = (counts[fps] || 0) + 1;
+            }
+            var result = [];
+            for (var k in counts) result.push({ forum_post_status: k, count: counts[k] });
+            result.sort(function(a, b) { return b.count - a.count; });
+            return result;
+        }
+
+        function computeDailyVolume(rows) {
+            var byDate = {};
+            for (var i = 0; i < rows.length; i++) {
+                var r = rows[i];
+                var d = r.received_at ? r.received_at.substring(0, 10) : 'unknown';
+                if (!byDate[d]) byDate[d] = { date: d, total: 0, completed: 0, hil: 0, errors: 0 };
+                byDate[d].total++;
+                if (r.status === 'completed') byDate[d].completed++;
+                if (r.status === 'hil_exception' || r.status === 'hil_concept') byDate[d].hil++;
+                if (r.status === 'error') byDate[d].errors++;
+            }
+            var dates = Object.keys(byDate).sort();
+            return dates.map(function(d) { return byDate[d]; });
+        }
+
+        function aggregateData(rows, filterDays) {
+            var filtered = filterRowsByDate(rows, filterDays);
+            return {
+                summary: computeSummary(filtered),
+                classification: computeClassification(filtered),
+                status: computeStatus(filtered),
+                forum_post_status: computeForumPostStatus(filtered),
+                daily_volume: computeDailyVolume(filtered),
+                recent_queries: filtered.slice(0, 20), // already sorted DESC from server
+            };
+        }
+
+        // ── Date range change (instant, no server call) ──
+        function onDateRangeChange() {
+            applyFilter();
+        }
+
+        function applyFilter() {
+            var rows = _cachedRawRows;
+            if (!rows) return; // no data yet
+            var filterDays = getFilterDays();
+            var data = aggregateData(rows, filterDays);
+            renderAll(data);
+            // Also re-compute vote stats for current filter (instant)
+            if (_cachedVoteEvents) {
+                var stats = computeVoteStats(_cachedVoteEvents, filterDays);
+                renderMixpanel(stats);
+            }
+        }
+
+        // ── Data fetch: raw-data from server ──
+        async function fetchRawData() {
+            const resp = await fetch(API_BASE + '/api/raw-data');
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+            const json = await resp.json();
+            return json.queries;
+        }
+
+        // ── Mixpanel fetch (background, non-blocking, all-time events) ──
+        async function fetchMixpanel(forceServer) {
+            try {
+                // Try cache first (unless forced)
+                if (!forceServer) {
+                    var cached = getVoteCache();
+                    if (cached) {
+                        var stats = computeVoteStats(cached, getFilterDays());
+                        renderMixpanel(stats);
+                        return;
+                    }
+                }
+                const resp = await fetch(API_BASE + '/api/mixpanel');
+                if (!resp.ok) return;
+                const data = await resp.json();
+                if (data.available && data.events) {
+                    saveVoteCache(data.events);
+                    var stats = computeVoteStats(data.events, getFilterDays());
+                    renderMixpanel(stats);
+                }
+            } catch (e) {
+                console.warn('Mixpanel fetch failed:', e);
+                // Try stale cache
+                var stale = getStaleVoteCache();
+                if (stale) {
+                    var stats = computeVoteStats(stale, getFilterDays());
+                    renderMixpanel(stats);
+                }
+            }
+        }
+
+        // ── Modal ──
+        async function openModal(correlationId) {
+            const modal = document.getElementById('queryModal');
+            const body = document.getElementById('modalBody');
+            modal.classList.add('active');
+            body.innerHTML = '<div class="text-center text-gray-400 py-8"><svg class="inline w-5 h-5 spinner" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg> Loading...</div>';
+
+            try {
+                const resp = await fetch(API_BASE + '/api/query/' + encodeURIComponent(correlationId));
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                const d = await resp.json();
+                body.innerHTML = renderModalContent(d);
+            } catch (err) {
+                body.innerHTML = '<div class="text-center text-red-500 py-8">Failed to load: ' + escapeHtml(err.message) + '</div>';
+            }
+        }
+
+        function closeModal() {
+            document.getElementById('queryModal').classList.remove('active');
+        }
+
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') closeModal();
+        });
+
+        function renderModalContent(d) {
+            let html = '';
+
+            // Posted By + Question Name (2-col grid)
+            html += '<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">';
+            html += '<div>\
+                <div class="text-[10px] text-gray-400 uppercase tracking-wider mb-1">Posted By</div>\
+                <div class="text-sm text-gray-700 font-medium">' + (escapeHtml(d.posted_by) || '<span class="text-gray-400">--</span>') + '</div>\
+            </div>';
+            html += '<div>\
+                <div class="text-[10px] text-gray-400 uppercase tracking-wider mb-1">Question Name</div>\
+                <div class="text-sm text-gray-700 font-medium">' + (escapeHtml(d.forum_post_subject) || '<span class="text-gray-400">--</span>') + '</div>\
+            </div>';
+            html += '</div>';
+
+            // Status grid (5-col)
+            html += '<div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">';
+            html += '<div class="bg-gray-50 rounded-lg p-3 text-center">\
+                <div class="text-[10px] text-gray-400 uppercase tracking-wider mb-1">Status</div>\
+                <div>' + statusBadge(d.status) + '</div>\
+            </div>';
+            html += '<div class="bg-gray-50 rounded-lg p-3 text-center">\
+                <div class="text-[10px] text-gray-400 uppercase tracking-wider mb-1">Forum</div>\
+                <div>' + forumBadge(d.forum_post_status) + '</div>\
+            </div>';
+            html += '<div class="bg-gray-50 rounded-lg p-3 text-center">\
+                <div class="text-[10px] text-gray-400 uppercase tracking-wider mb-1">Classification</div>\
+                <div class="text-xs font-medium text-gray-700">' + formatLabel(d.classification) + '</div>\
+            </div>';
+
+            // Quality score badge
+            if (d.quality_score !== null && d.quality_score !== undefined) {
+                var qs = d.quality_score;
+                var qColor = 'bg-green-100 text-green-700';
+                if (qs < 50) qColor = 'bg-red-100 text-red-700';
+                else if (qs < 85) qColor = 'bg-amber-100 text-amber-700';
+                html += '<div class="bg-gray-50 rounded-lg p-3 text-center">\
+                    <div class="text-[10px] text-gray-400 uppercase tracking-wider mb-1">Quality</div>\
+                    <div><span class="px-2 py-0.5 rounded-full text-[10px] font-medium ' + qColor + '">' + qs + '/100</span></div>\
+                </div>';
+            } else {
+                html += '<div class="bg-gray-50 rounded-lg p-3 text-center">\
+                    <div class="text-[10px] text-gray-400 uppercase tracking-wider mb-1">Quality</div>\
+                    <div class="text-xs text-gray-400">--</div>\
+                </div>';
+            }
+
+            html += '<div class="bg-gray-50 rounded-lg p-3 text-center">\
+                <div class="text-[10px] text-gray-400 uppercase tracking-wider mb-1">Processing</div>\
+                <div class="text-xs font-mono text-gray-700">' + formatTime(d.processing_time_ms) + '</div>\
+            </div>';
+            html += '</div>';
+
+            // Correlation ID
+            html += '<div class="mb-4">\
+                <div class="text-[10px] text-gray-400 uppercase tracking-wider mb-1">Correlation ID</div>\
+                <div class="text-xs font-mono text-gray-500 bg-gray-50 rounded px-2 py-1 break-all">' + escapeHtml(d.correlation_id) + '</div>\
+            </div>';
+
+            // Entity info
+            if (d.entity_name || d.discussion_id) {
+                html += '<div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">';
+                html += '<div>\
+                    <div class="text-[10px] text-gray-400 uppercase tracking-wider mb-1">Entity</div>\
+                    <div class="text-xs text-gray-600">' + (escapeHtml(d.entity_name) || '--') + '</div>\
+                </div>';
+                html += '<div>\
+                    <div class="text-[10px] text-gray-400 uppercase tracking-wider mb-1">Discussion ID</div>\
+                    <div class="text-xs font-mono text-gray-600">' + (escapeHtml(d.discussion_id) || '--') + '</div>\
+                </div>';
+                html += '<div>\
+                    <div class="text-[10px] text-gray-400 uppercase tracking-wider mb-1">Platform</div>\
+                    <div class="text-xs text-gray-600">' + (escapeHtml(d.platform_name) || '--') + '</div>\
+                </div>';
+                html += '</div>';
+            }
+
+            // Analysis (amber box)
+            if (d.analysis) {
+                html += '<div class="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4">\
+                    <div class="text-[10px] text-amber-600 uppercase tracking-wider font-semibold mb-1">Analysis</div>\
+                    <div class="text-xs text-amber-800 leading-relaxed">' + escapeHtml(d.analysis) + '</div>\
+                </div>';
+            }
+
+            // Sub-classification details
+            if (d.sub_classification) {
+                try {
+                    var sc = typeof d.sub_classification === 'string' ? JSON.parse(d.sub_classification) : d.sub_classification;
+                    var scEntries = Object.entries(sc).filter(function(e) { return e[1] !== null && e[1] !== undefined && e[1] !== ''; });
+                    if (scEntries.length > 0) {
+                        html += '<div class="bg-slate-50 border border-slate-200 rounded-lg p-3 mb-4">';
+                        html += '<div class="text-[10px] text-slate-500 uppercase tracking-wider font-semibold mb-2">Sub-Classification Details</div>';
+                        html += '<div class="grid grid-cols-2 gap-2">';
+                        scEntries.forEach(function(entry) {
+                            var key = entry[0], val = entry[1];
+                            var label = key.replace(/_/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); });
+                            html += '<div>\
+                                <div class="text-[10px] text-gray-400">' + escapeHtml(label) + '</div>\
+                                <div class="text-xs font-medium text-gray-700">' + escapeHtml(String(val)) + '</div>\
+                            </div>';
+                        });
+                        html += '</div></div>';
+                    }
+                } catch(e) {}
+            }
+
+            // HIL Reason
+            if (d.hil_reason) {
+                html += '<div class="bg-orange-50 border border-orange-200 rounded-lg p-3 mb-4">\
+                    <div class="text-[10px] text-orange-600 uppercase tracking-wider font-semibold mb-1">HIL Reason</div>\
+                    <div class="text-xs text-orange-800 leading-relaxed">' + escapeHtml(d.hil_reason) + '</div>\
+                </div>';
+            }
+
+            // Error message
+            if (d.error_message) {
+                html += '<div class="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">\
+                    <div class="text-[10px] text-red-600 uppercase tracking-wider font-semibold mb-1">Error</div>\
+                    <div class="text-xs text-red-800 leading-relaxed font-mono">' + escapeHtml(d.error_message) + '</div>\
+                </div>';
+            }
+
+            // Workflow Timeline
+            if (d.workflow && d.workflow.length > 0) {
+                html += '<div class="mb-4">';
+                html += '<div class="text-[10px] text-gray-400 uppercase tracking-wider font-semibold mb-3">Processing Pipeline</div>';
+                html += '<div class="space-y-2">';
+                d.workflow.forEach(function(step) {
+                    var iconBg = 'bg-gray-200 text-gray-500';
+                    var icon = '?';
+                    if (step.status === 'completed') { iconBg = 'bg-green-500 text-white'; icon = '\u2713'; }
+                    else if (step.status === 'failed') { iconBg = 'bg-red-500 text-white'; icon = '\u2717'; }
+                    else if (step.status === 'hil') { iconBg = 'bg-orange-500 text-white'; icon = '!'; }
+                    else if (step.status === 'skipped') { iconBg = 'bg-gray-300 text-gray-500'; icon = '-'; }
+                    html += '<div class="flex items-start gap-3">\
+                        <div class="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ' + iconBg + '">' + icon + '</div>\
+                        <div>\
+                            <div class="text-xs font-medium text-gray-700">' + escapeHtml(step.label) + '</div>\
+                            <div class="text-[11px] text-gray-500">' + escapeHtml(step.detail) + '</div>\
+                        </div>\
+                    </div>';
+                });
+                html += '</div></div>';
+            }
+
+            // Timestamps
+            html += '<div class="grid grid-cols-2 gap-3 mb-4">';
+            html += '<div>\
+                <div class="text-[10px] text-gray-400 uppercase tracking-wider mb-1">Received</div>\
+                <div class="text-xs font-mono text-gray-600">' + formatDate(d.received_at) + '</div>\
+            </div>';
+            html += '<div>\
+                <div class="text-[10px] text-gray-400 uppercase tracking-wider mb-1">Processed</div>\
+                <div class="text-xs font-mono text-gray-600">' + formatDate(d.processed_at) + '</div>\
+            </div>';
+            html += '</div>';
+
+            // View Logs button
+            html += '<div class="mt-2">';
+            html += '<button onclick="openLogViewer(\'' + escapeHtml(d.correlation_id) + '\')" class="px-3 py-1.5 text-xs font-medium rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 transition inline-flex items-center gap-2">\
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>\
+                View Processing Logs\
+            </button>';
+            html += '</div>';
+
+            return html;
+        }
+
+        // ── Log Viewer ──
+        async function openLogViewer(correlationId) {
+            const modal = document.getElementById('queryModal');
+            const body = document.getElementById('modalBody');
+            body.innerHTML = '<div class="text-center text-gray-400 py-8"><svg class="inline w-5 h-5 spinner" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg> Fetching logs from server...</div>';
+
+            try {
+                const resp = await fetch(API_BASE + '/api/query/' + encodeURIComponent(correlationId) + '/logs');
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                const data = await resp.json();
+
+                if (data.error) {
+                    body.innerHTML = '<div class="text-center text-amber-600 py-8">' + escapeHtml(data.error) + '</div>';
+                    return;
+                }
+
+                body.innerHTML = renderLogViewer(data);
+
+                // Render Mermaid diagram
+                if (data.mermaid) {
+                    try {
+                        mermaid.initialize({ startOnLoad: false, theme: 'neutral', securityLevel: 'loose' });
+                        const result = await mermaid.render('mermaidDiagram', data.mermaid);
+                        document.getElementById('mermaidContainer').innerHTML = result.svg;
+                    } catch (e) {
+                        document.getElementById('mermaidContainer').innerHTML = '<div class="text-xs text-red-400">Flowchart rendering failed</div>';
+                    }
+                }
+            } catch (err) {
+                body.innerHTML = '<div class="text-center text-red-500 py-8">Failed to load logs: ' + escapeHtml(err.message) + '</div>';
+            }
+        }
+
+        // ── Copy log to clipboard ──
+        var _currentLogData = null;
+
+        function buildLogPlaintext(data) {
+            var s = data.summary || {};
+            var lines = [];
+            lines.push('=== Processing Log Analysis ===');
+            lines.push('Correlation ID: ' + (data.correlation_id || '--'));
+            lines.push('');
+
+            if (s.student_text) {
+                lines.push('--- Student Post ---');
+                lines.push(s.student_text);
+                lines.push('');
+            }
+
+            lines.push('--- Pipeline Steps ---');
+            if (s.a1_result) {
+                lines.push('1. A1 Triage: ' + s.a1_result);
+            }
+            if (s.og_result) {
+                lines.push('2. OG Detection: ' + s.og_result);
+                if (s.og_reasoning) lines.push('   Reasoning: ' + s.og_reasoning);
+            }
+            if (s.a2_classification) {
+                lines.push('3. A2 Classification: ' + s.a2_classification);
+                if (s.a2_reasoning) lines.push('   Reasoning: ' + s.a2_reasoning);
+            }
+            if (s.tool_name) {
+                lines.push('4. ' + s.tool_name + ': ' + (s.json_error ? 'ERROR - ' + s.json_error : 'Done'));
+                if (s.validation_classification) lines.push('   Validation: ' + s.validation_classification);
+            }
+            if (s.quality_score !== null && s.quality_score !== undefined) {
+                lines.push('5. Quality Check: ' + s.quality_score + '/100');
+                if (s.quality_reason) lines.push('   Reason: ' + s.quality_reason);
+            }
+            lines.push('');
+
+            lines.push('--- Result ---');
+            lines.push('Status: ' + (s.final_status || '--'));
+            lines.push('Forum: ' + (s.final_forum || '--'));
+            lines.push('Time: ' + (s.final_time || '--'));
+            lines.push('API Cost: ' + (s.api_cost ? '$' + s.api_cost.toFixed(4) : '--'));
+            lines.push('');
+
+            if (data.milestones && data.milestones.length > 0) {
+                lines.push('--- Event Timeline (' + data.milestones.length + ' events) ---');
+                data.milestones.forEach(function(ms) {
+                    var ts = ms[1] ? (ms[1].split(' ')[1] || ms[1]) : '';
+                    lines.push(ts + '  ' + ms[2]);
+                });
+                lines.push('');
+            }
+
+            if (data.events && data.events.length > 0) {
+                lines.push('--- Raw Logs (' + data.events.length + ' lines) ---');
+                data.events.forEach(function(ev) {
+                    var ts = ev.timestamp ? (ev.timestamp.split(' ')[1] || '') : '';
+                    lines.push('[' + (ev.level || '') + '] ' + ts + ' ' + ev.message);
+                });
+            }
+
+            return lines.join('\n');
+        }
+
+        async function copyLogToClipboard() {
+            if (!_currentLogData) return;
+            var text = buildLogPlaintext(_currentLogData);
+            try {
+                await navigator.clipboard.writeText(text);
+                var btn = document.getElementById('copyLogBtn');
+                var orig = btn.innerHTML;
+                btn.innerHTML = '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> Copied!';
+                btn.classList.remove('bg-slate-100', 'text-slate-700');
+                btn.classList.add('bg-green-100', 'text-green-700');
+                setTimeout(function() {
+                    btn.innerHTML = orig;
+                    btn.classList.remove('bg-green-100', 'text-green-700');
+                    btn.classList.add('bg-slate-100', 'text-slate-700');
+                }, 2000);
+            } catch (e) {
+                console.error('Copy failed:', e);
+            }
+        }
+
+        function renderLogViewer(data) {
+            _currentLogData = data;
+            var s = data.summary || {};
+            var html = '';
+
+            // Back button + Copy button
+            html += '<div class="flex items-center justify-between mb-4">';
+            html += '<button onclick="openModal(\'' + escapeHtml(data.correlation_id) + '\')" class="text-xs text-orange-600 hover:text-orange-800 flex items-center gap-1">&larr; Back to Query Detail</button>';
+            html += '<button id="copyLogBtn" onclick="copyLogToClipboard()" class="px-3 py-1.5 text-xs font-medium rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 transition inline-flex items-center gap-2">';
+            html += '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"/></svg>';
+            html += 'Copy All</button>';
+            html += '</div>';
+
+            // Header
+            html += '<div class="text-sm font-semibold text-gray-700 mb-3">Processing Log Analysis</div>';
+
+            // Flowchart
+            html += '<div class="bg-gray-50 border border-gray-200 rounded-lg p-4 mb-4">';
+            html += '<div class="text-[10px] text-gray-400 uppercase tracking-wider font-semibold mb-2">Processing Flowchart</div>';
+            html += '<div id="mermaidContainer" class="flex justify-center overflow-x-auto"><div class="text-xs text-gray-400">Loading flowchart...</div></div>';
+            html += '</div>';
+
+            // Student post
+            if (s.student_text) {
+                html += '<div class="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">\
+                    <div class="text-[10px] text-blue-600 uppercase tracking-wider font-semibold mb-1">Student Post</div>\
+                    <div class="text-xs text-blue-800 leading-relaxed italic">' + escapeHtml(s.student_text) + '...</div>\
+                </div>';
+            }
+
+            // Pipeline steps
+            html += '<div class="space-y-3 mb-4">';
+
+            // A1 Triage
+            if (s.a1_result) {
+                html += '<div class="border-l-4 border-l-cyan-400 bg-white rounded-r-lg border border-gray-100 p-3">\
+                    <div class="flex items-center gap-2 mb-1">\
+                        <span class="text-[10px] font-bold text-cyan-600 uppercase">1. A1 Triage</span>\
+                        <span class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-cyan-100 text-cyan-700">' + escapeHtml(s.a1_result) + '</span>\
+                    </div>\
+                </div>';
+            }
+
+            // OG Detection
+            if (s.og_result) {
+                html += '<div class="border-l-4 border-l-cyan-400 bg-white rounded-r-lg border border-gray-100 p-3">\
+                    <div class="flex items-center gap-2 mb-1">\
+                        <span class="text-[10px] font-bold text-cyan-600 uppercase">2. OG Detection</span>\
+                        <span class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-cyan-100 text-cyan-700">' + escapeHtml(s.og_result) + '</span>\
+                    </div>\
+                    ' + (s.og_reasoning ? '<div class="text-[11px] text-gray-500 mt-1 leading-relaxed">' + escapeHtml(s.og_reasoning) + '</div>' : '') + '\
+                </div>';
+            }
+
+            // A2 Classification
+            if (s.a2_classification) {
+                html += '<div class="border-l-4 border-l-violet-400 bg-white rounded-r-lg border border-gray-100 p-3">\
+                    <div class="flex items-center gap-2 mb-1">\
+                        <span class="text-[10px] font-bold text-violet-600 uppercase">3. A2 Classification</span>\
+                        <span class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-violet-100 text-violet-700">' + escapeHtml(s.a2_classification) + '</span>\
+                    </div>\
+                    ' + (s.a2_reasoning ? '<div class="text-[11px] text-gray-500 mt-1 leading-relaxed">' + escapeHtml(s.a2_reasoning) + '</div>' : '') + '\
+                </div>';
+            }
+
+            // Tool Execution
+            if (s.tool_name) {
+                var hasError = s.json_error ? 'border-l-red-400' : 'border-l-violet-400';
+                var toolContent = '';
+                if (s.validation_classification) {
+                    toolContent += '<div class="text-[11px] text-gray-600 mt-1">Validation: <span class="font-medium">' + escapeHtml(s.validation_classification) + '</span></div>';
+                }
+                if (s.json_error) {
+                    toolContent += '<div class="text-[11px] text-red-600 mt-1 font-medium">' + escapeHtml(s.json_error) + '</div>';
+                }
+                html += '<div class="border-l-4 ' + hasError + ' bg-white rounded-r-lg border border-gray-100 p-3">\
+                    <div class="flex items-center gap-2 mb-1">\
+                        <span class="text-[10px] font-bold ' + (s.json_error ? 'text-red-600' : 'text-violet-600') + ' uppercase">4. ' + escapeHtml(s.tool_name) + '</span>\
+                        ' + (s.json_error ? '<span class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-100 text-red-700">ERROR</span>' : '<span class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-green-100 text-green-700">Done</span>') + '\
+                    </div>\
+                    ' + toolContent + '\
+                </div>';
+            }
+
+            // Quality Check
+            if (s.quality_score !== null && s.quality_score !== undefined) {
+                var qs2 = s.quality_score;
+                var qColor2 = 'border-l-green-400';
+                var qBadgeColor = 'bg-green-100 text-green-700';
+                if (qs2 < 50) { qColor2 = 'border-l-red-400'; qBadgeColor = 'bg-red-100 text-red-700'; }
+                else if (qs2 < 85) { qColor2 = 'border-l-amber-400'; qBadgeColor = 'bg-amber-100 text-amber-700'; }
+
+                html += '<div class="border-l-4 ' + qColor2 + ' bg-white rounded-r-lg border border-gray-100 p-3">\
+                    <div class="flex items-center gap-2 mb-1">\
+                        <span class="text-[10px] font-bold ' + (qs2 >= 85 ? 'text-green-600' : 'text-red-600') + ' uppercase">5. Quality Check</span>\
+                        <span class="px-1.5 py-0.5 rounded text-[10px] font-medium ' + qBadgeColor + '">' + qs2 + '/100</span>\
+                    </div>\
+                    <div class="text-[11px] text-gray-500 mt-1">' + escapeHtml(s.quality_reason || '') + '</div>\
+                </div>';
+            }
+
+            html += '</div>';
+
+            // Final result summary
+            html += '<div class="bg-gray-50 border border-gray-200 rounded-lg p-3 mb-4">';
+            html += '<div class="text-[10px] text-gray-400 uppercase tracking-wider font-semibold mb-2">Result</div>';
+            html += '<div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">';
+            html += '<div><span class="text-gray-400">Status:</span> <span class="font-medium">' + escapeHtml(s.final_status || '--') + '</span></div>';
+            html += '<div><span class="text-gray-400">Forum:</span> <span class="font-medium">' + escapeHtml(s.final_forum || '--') + '</span></div>';
+            html += '<div><span class="text-gray-400">Time:</span> <span class="font-medium">' + escapeHtml(s.final_time || '--') + '</span></div>';
+            html += '<div><span class="text-gray-400">API Cost:</span> <span class="font-medium">' + (s.api_cost ? '$' + s.api_cost.toFixed(4) : '--') + '</span></div>';
+            html += '</div></div>';
+
+            // Raw timeline
+            if (data.milestones && data.milestones.length > 0) {
+                html += '<details class="mb-4">';
+                html += '<summary class="text-[10px] text-gray-400 uppercase tracking-wider font-semibold cursor-pointer hover:text-gray-600">Event Timeline (' + data.milestones.length + ' events)</summary>';
+                html += '<div class="mt-2 space-y-1">';
+                data.milestones.forEach(function(ms) {
+                    var color = ms[0].includes('error') || ms[0].includes('fail') ? 'text-red-600' :
+                                  ms[0].includes('hil') ? 'text-orange-600' :
+                                  ms[0] === 'done' ? 'text-green-600' : 'text-gray-600';
+                    html += '<div class="flex gap-2 text-[11px]">\
+                        <span class="text-gray-400 font-mono whitespace-nowrap">' + escapeHtml(ms[1] ? ms[1].split(' ')[1] || ms[1] : '') + '</span>\
+                        <span class="' + color + '">' + escapeHtml(ms[2]) + '</span>\
+                    </div>';
+                });
+                html += '</div></details>';
+            }
+
+            // Raw logs (collapsible)
+            if (data.events && data.events.length > 0) {
+                html += '<details>';
+                html += '<summary class="text-[10px] text-gray-400 uppercase tracking-wider font-semibold cursor-pointer hover:text-gray-600">Raw Logs (' + data.events.length + ' lines)</summary>';
+                html += '<div class="mt-2 bg-gray-900 rounded-lg p-3 max-h-[300px] overflow-y-auto">';
+                data.events.forEach(function(ev) {
+                    var lc = ev.level === 'ERROR' ? 'text-red-400' : ev.level === 'WARNING' ? 'text-yellow-400' : 'text-gray-400';
+                    html += '<div class="text-[10px] font-mono leading-relaxed ' + lc + '">' + escapeHtml(ev.timestamp ? ev.timestamp.split(' ')[1] || '' : '') + ' ' + escapeHtml(ev.message) + '</div>';
+                });
+                html += '</div></details>';
+            }
+
+            return html;
+        }
+
+        // ── List Modal (now client-side filtered) ──
+        function openListModal(filterType) {
+            const modal = document.getElementById('listModal');
+            const body = document.getElementById('listModalBody');
+            const title = document.getElementById('listModalTitle');
+
+            const titles = { hil: 'HIL Queries', error: 'Error Queries', completed: 'Completed Queries' };
+            title.textContent = titles[filterType] || 'Queries';
+            modal.classList.add('active');
+
+            var rows = _cachedRawRows;
+            if (!rows) {
+                body.innerHTML = '<div class="text-center text-gray-400 py-8">No data loaded yet. Please wait for initial load.</div>';
+                return;
+            }
+
+            // Filter by current date range
+            var filtered = filterRowsByDate(rows, getFilterDays());
+
+            // Filter by type
+            var typeRows;
+            if (filterType === 'hil') {
+                typeRows = filtered.filter(function(r) { return r.status === 'hil_exception' || r.status === 'hil_concept'; });
+            } else if (filterType === 'error') {
+                typeRows = filtered.filter(function(r) { return r.status === 'error'; });
+            } else if (filterType === 'completed') {
+                typeRows = filtered.filter(function(r) { return r.status === 'completed'; });
+            } else {
+                typeRows = filtered;
+            }
+
+            body.innerHTML = renderListModalContent(typeRows, filterType);
+        }
+
+        function closeListModal() {
+            document.getElementById('listModal').classList.remove('active');
+        }
+
+        function renderListModalContent(rows, filterType) {
+            if (!rows || rows.length === 0) {
+                return '<div class="text-center text-gray-400 py-8">No queries found</div>';
+            }
+
+            var html = '<div class="text-xs text-gray-400 mb-3">' + rows.length + ' quer' + (rows.length === 1 ? 'y' : 'ies') + ' found</div>';
+            html += '<div class="space-y-3">';
+
+            rows.forEach(function(r) {
+                var isError = filterType === 'error';
+                var borderColor = isError ? 'border-l-red-400' : 'border-l-orange-400';
+                var bgHover = isError ? 'hover:bg-red-50/50' : 'hover:bg-orange-50/50';
+
+                // Build detail line based on type
+                var detailLine = '';
+                if (isError) {
+                    detailLine = r.error_message ? escapeHtml(r.error_message.substring(0, 150)) : 'Processing error';
+                } else {
+                    // HIL
+                    if (r.hil_reason) {
+                        detailLine = escapeHtml(r.hil_reason.substring(0, 150));
+                    } else if (r.forum_post_status === 'skipped_quality_hil' && r.quality_score !== null) {
+                        detailLine = 'Quality score: ' + r.quality_score + '/100 (threshold: 85)';
+                    } else {
+                        detailLine = 'Escalated to Human-in-the-Loop review';
+                    }
+                }
+
+                // Quality badge
+                var qualityBadge = '';
+                if (r.quality_score !== null && r.quality_score !== undefined) {
+                    var qs3 = r.quality_score;
+                    var qColor3 = 'bg-green-100 text-green-700';
+                    if (qs3 < 50) qColor3 = 'bg-red-100 text-red-700';
+                    else if (qs3 < 85) qColor3 = 'bg-amber-100 text-amber-700';
+                    qualityBadge = '<span class="px-1.5 py-0.5 rounded text-[10px] font-medium ' + qColor3 + '">' + qs3 + '/100</span>';
+                }
+
+                html += '<div class="border-l-4 ' + borderColor + ' bg-white rounded-lg border border-gray-100 p-3 ' + bgHover + ' cursor-pointer transition" onclick="closeListModal();openModal(\'' + escapeHtml(r.correlation_id) + '\')">\
+                    <div class="flex items-start justify-between gap-2 mb-1.5">\
+                        <div class="flex items-center gap-2 flex-wrap">\
+                            ' + statusBadge(r.status) + '\
+                            ' + (r.forum_post_status ? forumBadge(r.forum_post_status) : '') + '\
+                            ' + qualityBadge + '\
+                        </div>\
+                        <div class="text-[10px] text-gray-400 whitespace-nowrap">' + formatDate(r.received_at) + '</div>\
+                    </div>\
+                    <div class="flex items-center gap-2 mb-1">\
+                        <span class="text-xs font-medium text-gray-700">' + formatLabel(r.classification) + '</span>\
+                        ' + (r.entity_name ? '<span class="text-[10px] text-gray-400">' + escapeHtml(r.entity_name) + '</span>' : '') + '\
+                        ' + (r.forum_post_subject ? '<span class="text-[10px] text-gray-400 truncate max-w-[200px]" title="' + escapeHtml(r.forum_post_subject) + '">' + escapeHtml(r.forum_post_subject.substring(0, 40)) + '</span>' : '') + '\
+                    </div>\
+                    <div class="text-[11px] text-gray-500 leading-relaxed">' + detailLine + '</div>\
+                    <div class="flex items-center gap-3 mt-1.5 text-[10px] text-gray-400">\
+                        <span>ID: ' + r.id + '</span>\
+                        <span>' + formatTime(r.processing_time_ms) + '</span>\
+                        ' + (r.images_transcribed > 0 ? '<span>' + r.images_transcribed + ' img</span>' : '') + '\
+                    </div>\
+                </div>';
+            });
+
+            html += '</div>';
+            return html;
+        }
+
+        // Close list modal on Escape too
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') closeListModal();
+        });
+
+        // ── Render ──
+        function renderSummary(s) {
+            document.getElementById('totalQueries').textContent = s.total_queries;
+            document.getElementById('hilCount').textContent = s.hil_count;
+            document.getElementById('hilPct').textContent = s.hil_pct > 0 ? s.hil_pct + '%' : '';
+            document.getElementById('errorCount').textContent = s.error_count;
+            document.getElementById('errorPct').textContent = s.error_pct > 0 ? s.error_pct + '%' : '';
+            document.getElementById('completedCount').textContent = s.completed;
+        }
+
+        function buildLegend(containerId, labels, values, colors) {
+            var el = document.getElementById(containerId);
+            el.innerHTML = labels.map(function(l, i) {
+                return '<div class="flex items-center gap-2">\
+                    <span class="w-2.5 h-2.5 rounded-full inline-block" style="background:' + colors[i % colors.length] + '"></span>\
+                    <span>' + formatLabel(l) + ': <strong class="text-gray-700">' + values[i] + '</strong></span>\
+                </div>';
+            }).join('');
+        }
+
+        function renderClassification(data) {
+            var labels = data.map(function(d) { return d.classification; });
+            var values = data.map(function(d) { return d.count; });
+
+            if (charts.classification) charts.classification.destroy();
+            charts.classification = new Chart(document.getElementById('classificationChart'), {
+                type: 'doughnut',
+                data: {
+                    labels: labels.map(formatLabel),
+                    datasets: [{
+                        data: values,
+                        backgroundColor: COLORS.classification,
+                        borderWidth: 2,
+                        borderColor: '#ffffff',
+                        hoverOffset: 6,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    cutout: '55%',
+                    plugins: { legend: { display: false } }
+                }
+            });
+            buildLegend('classificationLegend', labels, values, COLORS.classification);
+        }
+
+        function renderStatus(data) {
+            var labels = data.map(function(d) { return d.status; });
+            var values = data.map(function(d) { return d.count; });
+
+            if (charts.status) charts.status.destroy();
+            charts.status = new Chart(document.getElementById('statusChart'), {
+                type: 'doughnut',
+                data: {
+                    labels: labels.map(formatLabel),
+                    datasets: [{
+                        data: values,
+                        backgroundColor: COLORS.status,
+                        borderWidth: 2,
+                        borderColor: '#ffffff',
+                        hoverOffset: 6,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    cutout: '55%',
+                    plugins: { legend: { display: false } }
+                }
+            });
+            buildLegend('statusLegend', labels, values, COLORS.status);
+        }
+
+        function renderForumPost(data) {
+            var labels = data.map(function(d) { return formatLabel(d.forum_post_status); });
+            var values = data.map(function(d) { return d.count; });
+
+            if (charts.forumPost) charts.forumPost.destroy();
+            charts.forumPost = new Chart(document.getElementById('forumPostChart'), {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        data: values,
+                        backgroundColor: COLORS.forumPost,
+                        borderRadius: 6,
+                        barPercentage: 0.6,
+                    }]
+                },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { grid: { color: '#f1f5f9' }, ticks: { color: '#64748b' } },
+                        y: { grid: { display: false }, ticks: { color: '#64748b' } }
+                    }
+                }
+            });
+        }
+
+        function renderDailyVolume(data) {
+            var labels = data.map(function(d) { return d.date; });
+
+            if (charts.dailyVolume) charts.dailyVolume.destroy();
+            charts.dailyVolume = new Chart(document.getElementById('dailyVolumeChart'), {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: 'Completed',
+                            data: data.map(function(d) { return d.completed; }),
+                            backgroundColor: COLORS.daily.completed,
+                            borderRadius: 4,
+                        },
+                        {
+                            label: 'HIL',
+                            data: data.map(function(d) { return d.hil; }),
+                            backgroundColor: COLORS.daily.hil,
+                            borderRadius: 4,
+                        },
+                        {
+                            label: 'Errors',
+                            data: data.map(function(d) { return d.errors; }),
+                            backgroundColor: COLORS.daily.errors,
+                            borderRadius: 4,
+                        },
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                            labels: { color: '#64748b', boxWidth: 12, padding: 12, font: { size: 11 } }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            stacked: true,
+                            grid: { display: false },
+                            ticks: { color: '#64748b', maxRotation: 45, font: { size: 10 } }
+                        },
+                        y: {
+                            stacked: true,
+                            grid: { color: '#f1f5f9' },
+                            ticks: { color: '#64748b', stepSize: 1 },
+                            beginAtZero: true,
+                        }
+                    }
+                }
+            });
+        }
+
+        function renderQueries(rows) {
+            var tbody = document.getElementById('queriesTableBody');
+            if (!rows || rows.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="8" class="px-3 py-8 text-center text-gray-400">No queries found</td></tr>';
+                return;
+            }
+            tbody.innerHTML = rows.map(function(r) {
+                var nonPosted = isNonPosted(r.forum_post_status);
+                var rowClass = nonPosted ? 'clickable-row' : '';
+                var rowClick = nonPosted ? 'onclick="openModal(\'' + escapeHtml(r.correlation_id) + '\')"' : '';
+                var viewBtn = nonPosted
+                    ? '<button class="px-2 py-0.5 text-[10px] font-medium rounded bg-orange-50 text-orange-700 hover:bg-orange-100 transition" onclick="event.stopPropagation();openModal(\'' + escapeHtml(r.correlation_id) + '\')">View</button>'
+                    : '';
+                return '<tr class="border-b border-gray-100 hover:bg-gray-50/60 ' + rowClass + '" ' + rowClick + '>\
+                    <td class="px-3 py-2 font-mono text-gray-400">' + r.id + '</td>\
+                    <td class="px-3 py-2 whitespace-nowrap">' + formatDate(r.received_at) + '</td>\
+                    <td class="px-3 py-2 whitespace-nowrap text-gray-500">' + (r.entity_name || '--') + (r.discussion_id ? '<br><span class="text-[10px] text-gray-400">D:' + r.discussion_id + '</span>' : '') + '</td>\
+                    <td class="px-3 py-2">' + formatLabel(r.classification) + '</td>\
+                    <td class="px-3 py-2">' + statusBadge(r.status) + '</td>\
+                    <td class="px-3 py-2">' + forumBadge(r.forum_post_status) + '</td>\
+                    <td class="px-3 py-2 text-right font-mono">' + formatTime(r.processing_time_ms) + '</td>\
+                    <td class="px-3 py-2 text-center">' + viewBtn + '</td>\
+                </tr>';
+            }).join('');
+        }
+
+        function renderMixpanel(stats) {
+            if (stats) {
+                document.getElementById('upvoteCount').textContent = stats.upvotes;
+                document.getElementById('downvoteCount').textContent = stats.downvotes;
+            } else {
+                document.getElementById('upvoteCount').textContent = '--';
+                document.getElementById('downvoteCount').textContent = '--';
+            }
+        }
+
+        // ── Render all sections from aggregated data ──
+        function renderAll(data) {
+            renderSummary(data.summary);
+            renderClassification(data.classification);
+            renderStatus(data.status);
+            renderForumPost(data.forum_post_status);
+            renderDailyVolume(data.daily_volume);
+            renderQueries(data.recent_queries);
+        }
+
+        // ── Main refresh ──
+        async function refreshData(forceServer) {
+            const icon = document.getElementById('refreshIcon');
+            const statusEl = document.getElementById('lastUpdated');
+
+            // 1) Try cached raw rows (unless forced)
+            if (!forceServer) {
+                var cached = getRawCache();
+                if (cached) {
+                    var data = aggregateData(cached, getFilterDays());
+                    renderAll(data);
+                    var cacheTs = getRawCacheTimestamp();
+                    statusEl.textContent = 'Cached ' + formatCacheAge(cacheTs);
+                    startCountdown(cacheTs);
+                    // Fetch Mixpanel in background (cache-first)
+                    fetchMixpanel(false);
+                    return;
+                }
+            }
+
+            // 2) Fetch raw data from server
+            icon.classList.add('spinner');
+            try {
+                var rows = await fetchRawData();
+                saveRawCache(rows);
+                var data2 = aggregateData(rows, getFilterDays());
+                renderAll(data2);
+                var now = new Date().toLocaleTimeString();
+                statusEl.textContent = 'Updated ' + now;
+                startCountdown(Date.now());
+                // Fetch Mixpanel in background (force server refresh)
+                fetchMixpanel(true);
+            } catch (err) {
+                console.error('Refresh failed:', err);
+                var stale = getStaleRawCache();
+                if (stale) {
+                    var data3 = aggregateData(stale, getFilterDays());
+                    renderAll(data3);
+                    statusEl.textContent = 'Offline \u00b7 stale cache';
+                } else {
+                    statusEl.textContent = 'Error: ' + err.message;
+                }
+            } finally {
+                icon.classList.remove('spinner');
+            }
+        }
+
+        // ── Init ──
+        refreshData(false);  // cache-first on page load
+        refreshTimer = setInterval(function() { refreshData(true); }, 15 * 60 * 1000);  // force-refresh every 15 min
+    </script>
+</body>
+</html>
