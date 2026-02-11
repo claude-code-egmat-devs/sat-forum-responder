@@ -116,6 +116,8 @@ class TeamsNotificationClient:
     def _get_status_emoji(self, status: str, forum_post_status: Optional[str]) -> str:
         if status == "completed" and forum_post_status == "posted":
             return "✅"
+        elif status == "completed" and forum_post_status == "posted_hil":
+            return "🟠"
         elif status == "completed":
             return "🟢"
         elif status == "hil_exception":
@@ -140,6 +142,7 @@ class TeamsNotificationClient:
     def _get_forum_post_status_text(self, forum_post_status: str) -> str:
         status_map = {
             "posted": "✅ Posted to Forum",
+            "posted_hil": "🟠 Posted (HIL Acknowledgment — needs human follow-up)",
             "failed": "❌ Failed to Post",
             "skipped_hil": "⏭️ Skipped (HIL)",
             "skipped_url": "⏭️ Skipped (URL)",

@@ -414,18 +414,7 @@ Subject: {forum_data.get("forumPostSubject", "")}
         is_hil = hil_flag is True or str(hil_flag).lower() == "true"
 
         if is_hil:
-            logger.info(f"[{correlation_id}] VALID error detected (HIL_flag=true) — skipping response generation")
-            tool_output = {
-                "correlation_id": correlation_id,
-                "tool_name": "TOOL_4_VALIDATOR",
-                "tool_sequence": sequence,
-                "tool_output": parsed1,
-                "execution_status": "success",
-                "execution_time_ms": result1.get("execution_time_ms"),
-                "classification_result": val_result.get("classification"),
-                "exception_flag": False
-            }
-            return {"raw": result1, "parsed": parsed1, "tool_output": tool_output}
+            logger.info(f"[{correlation_id}] VALID error detected (HIL_flag=true) — proceeding to Agent 2 for acknowledgment response")
 
         # --- Call 2: Responder ---
         logger.info(f"[{correlation_id}] Running tool_4 responder (Agent 2)...")
@@ -677,6 +666,16 @@ Subject: {forum_data.get("forumPostSubject", "")}
             else:
                 results["processing_status"] = "completed"
 
+            # Override for Pointing_Out_Corrections acknowledgment cases
+            # Allow VALID/PARTIALLY_VALID/AMBIGUOUS to post an acknowledgment response
+            if (a2_classification == "Pointing_Out_Corrections" and results.get("final_response_html")):
+                tool_parsed = results.get("tool_result", {}).get("parsed", {})
+                val_class = tool_parsed.get("validation_result", {}).get("classification", "").upper()
+                if val_class in ("VALID", "PARTIALLY_VALID", "AMBIGUOUS"):
+                    logger.info(f"[{correlation_id}] Pointing_Out_Corrections {val_class} — overriding to post acknowledgment response")
+                    results["hil_acknowledgment"] = True
+                    results["processing_status"] = "completed"
+
             logger.info(f"[{correlation_id}] Processing completed: {results['processing_status']}")
             return results
 
@@ -725,6 +724,9 @@ Subject: {forum_data.get("forumPostSubject", "")}
 
             if validation_classification == "INVALID":
                 logger.info(f"Pointing_Out_Corrections with INVALID classification - will post")
+                return True
+            elif validation_classification in ("VALID", "PARTIALLY_VALID", "AMBIGUOUS"):
+                logger.info(f"Pointing_Out_Corrections with {validation_classification} classification - will post acknowledgment")
                 return True
             else:
                 logger.info(f"Pointing_Out_Corrections with {validation_classification} classification - will NOT post")
@@ -1116,6 +1118,10 @@ Review this response and provide your quality assessment."""
                     logger.info(f"Successfully posted to forum: {results['correlation_id']}")
                     save_status["forum_post_status"] = "posted"
                     html_was_cleaned = forum_result.get("html_cleaned", False)
+                    # Convert to posted_hil if this was an acknowledgment post
+                    if results.get("hil_acknowledgment"):
+                        save_status["forum_post_status"] = "posted_hil"
+                        results["hil_flag"] = True
                 else:
                     logger.error(f"Failed to post to forum: {forum_result.get('error')}")
                     save_status["forum_post_status"] = "failed"
@@ -1161,5 +1167,12 @@ Review this response and provide your quality assessment."""
 
         save_status["quality_score"] = quality_score
         save_status["sub_classification"] = sub_classification
-        save_status["hil_reason"] = "quality_below_threshold" if save_status.get("forum_post_status") == "skipped_quality_hil" else None
+        if save_status.get("forum_post_status") == "skipped_quality_hil":
+            save_status["hil_reason"] = "quality_below_threshold"
+        elif save_status.get("forum_post_status") == "posted_hil":
+            tool_parsed = results.get("tool_result", {}).get("parsed", {})
+            val_class = tool_parsed.get("validation_result", {}).get("classification", "unknown").lower()
+            save_status["hil_reason"] = f"hil_acknowledgment_{val_class}"
+        else:
+            save_status["hil_reason"] = None
         return save_status

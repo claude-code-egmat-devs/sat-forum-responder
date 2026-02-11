@@ -135,7 +135,7 @@ def get_summary_stats(start_date=None, end_date=None):
                 COUNT(*) as total_queries,
                 SUM(CASE WHEN status IN ('hil_exception', 'hil_concept') THEN 1 ELSE 0 END) as hil_count,
                 SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as error_count,
-                SUM(CASE WHEN forum_post_status = 'posted' THEN 1 ELSE 0 END) as auto_posted,
+                SUM(CASE WHEN forum_post_status IN ('posted', 'posted_hil') THEN 1 ELSE 0 END) as auto_posted,
                 SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
                 ROUND(AVG(CASE WHEN processing_time_ms > 0 THEN processing_time_ms END)) as avg_processing_ms,
                 SUM(CASE WHEN images_transcribed > 0 THEN 1 ELSE 0 END) as with_images
@@ -401,6 +401,9 @@ def _build_analysis(detail):
         else:
             parts.append("The generated response did not meet the quality threshold (score below 85). The query has been escalated to HIL for manual response.")
 
+    elif fps == "posted_hil":
+        parts.append("An acknowledgment response was auto-posted to the forum, but this query still requires human follow-up.")
+
     elif fps == "skipped_validation":
         parts.append("The query classification was not eligible for automated forum posting. Only specific classification types are allowed to be auto-posted.")
 
@@ -561,7 +564,7 @@ def _build_workflow(detail):
         })
         return steps
 
-    if fps in ("posted", "skipped_dry_run"):
+    if fps in ("posted", "posted_hil", "skipped_dry_run"):
         q_detail = f"Score: {quality_score}/100 — Passed" if quality_score is not None else "Passed"
         steps.append({
             "step": 5,
@@ -591,6 +594,13 @@ def _build_workflow(detail):
             "label": "Forum Posting",
             "status": "completed",
             "detail": "Posted successfully"
+        })
+    elif fps == "posted_hil":
+        steps.append({
+            "step": 6,
+            "label": "Forum Posting",
+            "status": "completed",
+            "detail": "HIL acknowledgment posted (needs human follow-up)"
         })
     elif fps == "failed":
         steps.append({
