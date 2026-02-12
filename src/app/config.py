@@ -127,6 +127,10 @@ class Config:
     def get_email_notification_config():
         return Config._load_api_keys().get('email_notification', {})
 
+    @staticmethod
+    def get_openrouter_config():
+        return Config._load_api_keys().get('openrouter', {})
+
 
 # Create singleton instance
 config = Config()

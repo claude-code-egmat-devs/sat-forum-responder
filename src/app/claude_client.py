@@ -7,6 +7,7 @@ Uses Claude Opus 4.5 model
 import anthropic
 import json
 import logging
+import requests
 import sys
 import time
 from typing import Dict, Any, Optional, List
@@ -24,6 +25,12 @@ logger = logging.getLogger(__name__)
 # Claude Opus 4.5 Pricing (per million tokens)
 OPUS_INPUT_PRICE_PER_MILLION = 15.0   # $15 per million input tokens
 OPUS_OUTPUT_PRICE_PER_MILLION = 75.0  # $75 per million output tokens
+
+# OpenRouter GPT-5.2 Pricing (per million tokens)
+GPT52_INPUT_PRICE_PER_MILLION = 1.75   # $1.75 per million input tokens
+GPT52_OUTPUT_PRICE_PER_MILLION = 14.0  # $14 per million output tokens
+
+OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 
 def calculate_cost(input_tokens: int, output_tokens: int) -> Dict[str, float]:
@@ -48,6 +55,18 @@ def calculate_cost(input_tokens: int, output_tokens: int) -> Dict[str, float]:
     }
 
 
+def calculate_openrouter_cost(input_tokens: int, output_tokens: int) -> Dict[str, float]:
+    """Calculate cost for an OpenRouter GPT-5.2 API call."""
+    input_cost = (input_tokens / 1_000_000) * GPT52_INPUT_PRICE_PER_MILLION
+    output_cost = (output_tokens / 1_000_000) * GPT52_OUTPUT_PRICE_PER_MILLION
+    total_cost = input_cost + output_cost
+    return {
+        "input_cost": round(input_cost, 6),
+        "output_cost": round(output_cost, 6),
+        "total_cost": round(total_cost, 6)
+    }
+
+
 class ClaudeClient:
     """Client for interacting with Claude API"""
 
@@ -56,7 +75,11 @@ class ClaudeClient:
         api_key: str,
         model: str = "claude-opus-4-5-20251101",
         max_tokens: int = 20000,
-        thinking_budget: int = 6000
+        thinking_budget: int = 6000,
+        openrouter_api_key: str = None,
+        openrouter_model: str = "openai/gpt-5.2",
+        openrouter_max_tokens: int = None,
+        openrouter_reasoning_effort: str = "high"
     ):
         """
         Initialize Claude client
@@ -66,11 +89,23 @@ class ClaudeClient:
             model: Model name (default: Claude Opus 4.5)
             max_tokens: Maximum output tokens
             thinking_budget: Extended thinking budget tokens
+            openrouter_api_key: OpenRouter API key for fallback
+            openrouter_model: OpenRouter model (default: openai/gpt-5.2)
+            openrouter_max_tokens: Max tokens for OpenRouter (defaults to max_tokens)
+            openrouter_reasoning_effort: Reasoning effort for GPT-5.2 (default: high)
         """
         self.client = anthropic.Anthropic(api_key=api_key)
         self.model = model
         self.max_tokens = max_tokens
         self.thinking_budget = thinking_budget
+
+        # OpenRouter fallback config
+        self._openrouter_api_key = openrouter_api_key
+        self._openrouter_model = openrouter_model
+        self._openrouter_max_tokens = openrouter_max_tokens or max_tokens
+        self._openrouter_reasoning_effort = openrouter_reasoning_effort
+        self._openrouter_enabled = bool(openrouter_api_key)
+        self._claude_failed = False  # Sticky flag for per-request fallback
 
         # Initialize AI usage logger
         if AI_LOGGING_ENABLED:
@@ -81,14 +116,21 @@ class ClaudeClient:
             logger.warning("AI usage logging not available")
 
         logger.info(f"Claude client initialized with model: {model}")
+        if self._openrouter_enabled:
+            logger.info(f"OpenRouter fallback enabled with model: {openrouter_model}")
+
+    def reset_fallback_state(self):
+        """Reset the sticky fallback flag. Call at the start of each new request."""
+        self._claude_failed = False
 
     def _log_usage(self, purpose: str, input_tokens: int, output_tokens: int,
-                   execution_time: int, success: bool = True, error: str = None):
+                   execution_time: int, success: bool = True, error: str = None,
+                   model_override: str = None):
         """Log AI usage to centralized monitoring system"""
         if self.usage_logger:
             try:
                 self.usage_logger.log_call(
-                    model=self.model,
+                    model=model_override or self.model,
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
                     purpose=purpose,
@@ -99,6 +141,221 @@ class ClaudeClient:
                 )
             except Exception as e:
                 logger.warning(f"Failed to log AI usage: {e}")
+
+    def _call_openrouter(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        images: Optional[List[Dict[str, str]]] = None,
+        retry_count: int = 2,
+        purpose: str = "openrouter_text"
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Call OpenRouter API (GPT-5.2) as fallback.
+
+        Args:
+            system_prompt: System instructions
+            user_prompt: User message
+            images: Optional list of dicts with 'data' (base64) and 'media_type' keys
+            retry_count: Number of retries on failure
+            purpose: Purpose label for usage logging
+
+        Returns:
+            Dictionary with response data (same format as Claude methods) or None
+        """
+        for attempt in range(retry_count):
+            try:
+                start_time = time.time()
+
+                # Build user content
+                if images:
+                    user_content = []
+                    for img in images:
+                        media_type = img.get("media_type", "image/png")
+                        user_content.append({
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{media_type};base64,{img['data']}"
+                            }
+                        })
+                    user_content.append({"type": "text", "text": user_prompt})
+                else:
+                    user_content = user_prompt
+
+                payload = {
+                    "model": self._openrouter_model,
+                    "max_tokens": self._openrouter_max_tokens,
+                    "reasoning": {"effort": self._openrouter_reasoning_effort},
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_content}
+                    ]
+                }
+
+                headers = {
+                    "Authorization": f"Bearer {self._openrouter_api_key}",
+                    "Content-Type": "application/json"
+                }
+
+                resp = requests.post(OPENROUTER_API_URL, json=payload, headers=headers, timeout=300)
+                resp.raise_for_status()
+                data = resp.json()
+
+                execution_time = int((time.time() - start_time) * 1000)
+
+                # Extract response text
+                choice = data.get("choices", [{}])[0]
+                message = choice.get("message", {})
+                text_response = message.get("content", "")
+
+                # Extract token usage
+                usage = data.get("usage", {})
+                input_tokens = usage.get("prompt_tokens", 0)
+                output_tokens = usage.get("completion_tokens", 0)
+
+                cost = calculate_openrouter_cost(input_tokens, output_tokens)
+
+                logger.info(f"OpenRouter API call successful ({execution_time}ms)")
+                logger.info(f"  MODEL: {self._openrouter_model}")
+                logger.info(f"  TOKENS: input={input_tokens}, output={output_tokens}")
+                logger.info(f"  COST: input=${cost['input_cost']:.6f}, output=${cost['output_cost']:.6f}, total=${cost['total_cost']:.6f}")
+
+                self._log_usage(purpose, input_tokens, output_tokens, execution_time,
+                                model_override=self._openrouter_model)
+
+                return {
+                    "response": text_response,
+                    "thinking": "",
+                    "execution_time_ms": execution_time,
+                    "model": self._openrouter_model,
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "cost": cost
+                }
+
+            except requests.exceptions.RequestException as e:
+                logger.error(f"OpenRouter API error (attempt {attempt + 1}): {e}")
+                if attempt >= 1:
+                    self._log_usage(purpose, 0, 0, 0, success=False, error=str(e),
+                                    model_override=self._openrouter_model)
+                if attempt < retry_count - 1:
+                    time.sleep(3 * (attempt + 1))
+            except Exception as e:
+                logger.error(f"Unexpected OpenRouter error (attempt {attempt + 1}): {e}")
+                if attempt < retry_count - 1:
+                    time.sleep(3 * (attempt + 1))
+
+        return None
+
+    def _call_openrouter_structured(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        tool_name: str,
+        tool_description: str,
+        tool_schema: Dict[str, Any],
+        retry_count: int = 2
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Call OpenRouter API with function calling for structured output.
+        GPT-5.2 supports reasoning + tool_choice together (single call).
+
+        Args:
+            system_prompt: System instructions
+            user_prompt: User message
+            tool_name: Name of the tool
+            tool_description: Description of what the tool does
+            tool_schema: JSON Schema for the tool's parameters
+            retry_count: Number of retries on failure
+
+        Returns:
+            Dictionary with response data including 'parsed' field, or None
+        """
+        for attempt in range(retry_count):
+            try:
+                start_time = time.time()
+
+                function_def = {
+                    "type": "function",
+                    "function": {
+                        "name": tool_name,
+                        "description": tool_description,
+                        "parameters": tool_schema
+                    }
+                }
+
+                payload = {
+                    "model": self._openrouter_model,
+                    "max_tokens": self._openrouter_max_tokens,
+                    "reasoning": {"effort": self._openrouter_reasoning_effort},
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    "tools": [function_def],
+                    "tool_choice": {"type": "function", "function": {"name": tool_name}}
+                }
+
+                headers = {
+                    "Authorization": f"Bearer {self._openrouter_api_key}",
+                    "Content-Type": "application/json"
+                }
+
+                resp = requests.post(OPENROUTER_API_URL, json=payload, headers=headers, timeout=300)
+                resp.raise_for_status()
+                data = resp.json()
+
+                execution_time = int((time.time() - start_time) * 1000)
+
+                # Extract tool call result
+                choice = data.get("choices", [{}])[0]
+                message = choice.get("message", {})
+                tool_calls = message.get("tool_calls", [])
+
+                parsed = None
+                if tool_calls:
+                    arguments_str = tool_calls[0].get("function", {}).get("arguments", "{}")
+                    parsed = json.loads(arguments_str)
+
+                # Extract token usage
+                usage = data.get("usage", {})
+                input_tokens = usage.get("prompt_tokens", 0)
+                output_tokens = usage.get("completion_tokens", 0)
+
+                cost = calculate_openrouter_cost(input_tokens, output_tokens)
+
+                logger.info(f"OpenRouter structured call successful ({execution_time}ms)")
+                logger.info(f"  MODEL: {self._openrouter_model}")
+                logger.info(f"  TOKENS: input={input_tokens}, output={output_tokens}")
+                logger.info(f"  COST: input=${cost['input_cost']:.6f}, output=${cost['output_cost']:.6f}, total=${cost['total_cost']:.6f}")
+
+                self._log_usage("openrouter_structured", input_tokens, output_tokens, execution_time,
+                                model_override=self._openrouter_model)
+
+                return {
+                    "response": json.dumps(parsed) if parsed else "",
+                    "parsed": parsed,
+                    "thinking": "",
+                    "execution_time_ms": execution_time,
+                    "model": self._openrouter_model,
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "cost": cost
+                }
+
+            except requests.exceptions.RequestException as e:
+                logger.error(f"OpenRouter structured API error (attempt {attempt + 1}): {e}")
+                if attempt >= 1:
+                    self._log_usage("openrouter_structured", 0, 0, 0, success=False, error=str(e),
+                                    model_override=self._openrouter_model)
+                if attempt < retry_count - 1:
+                    time.sleep(3 * (attempt + 1))
+            except Exception as e:
+                logger.error(f"Unexpected OpenRouter structured error (attempt {attempt + 1}): {e}")
+                if attempt < retry_count - 1:
+                    time.sleep(3 * (attempt + 1))
+
+        return None
 
     def call_agent(
         self,
@@ -117,6 +374,11 @@ class ClaudeClient:
         Returns:
             Dictionary with response data or None
         """
+        # Sticky short-circuit: if Claude already failed this request, go straight to OpenRouter
+        if self._claude_failed and self._openrouter_enabled:
+            logger.info("Claude previously failed this request — routing directly to OpenRouter (call_agent)")
+            return self._call_openrouter(system_prompt, user_prompt, purpose="openrouter_text_sticky")
+
         for attempt in range(retry_count):
             try:
                 start_time = time.time()
@@ -186,6 +448,12 @@ class ClaudeClient:
                 if attempt < retry_count - 1:
                     time.sleep(3 * (attempt + 1))
 
+        # Claude exhausted all retries — try OpenRouter fallback
+        if self._openrouter_enabled:
+            logger.warning("Claude call_agent failed after all retries — falling back to OpenRouter")
+            self._claude_failed = True
+            return self._call_openrouter(system_prompt, user_prompt, purpose="openrouter_text_fallback")
+
         return None
 
     def call_agent_with_vision(
@@ -209,6 +477,15 @@ class ClaudeClient:
         Returns:
             Dictionary with response data or None
         """
+        # Sticky short-circuit: route to OpenRouter if Claude already failed
+        if self._claude_failed and self._openrouter_enabled:
+            logger.info("Claude previously failed this request — routing directly to OpenRouter (vision)")
+            return self._call_openrouter(
+                system_prompt, user_prompt,
+                images=[{"data": image_data, "media_type": media_type}],
+                purpose="openrouter_vision_sticky"
+            )
+
         for attempt in range(retry_count):
             try:
                 start_time = time.time()
@@ -290,6 +567,16 @@ class ClaudeClient:
                 if attempt < retry_count - 1:
                     time.sleep(3 * (attempt + 1))
 
+        # Claude exhausted all retries — try OpenRouter fallback
+        if self._openrouter_enabled:
+            logger.warning("Claude call_agent_with_vision failed after all retries — falling back to OpenRouter")
+            self._claude_failed = True
+            return self._call_openrouter(
+                system_prompt, user_prompt,
+                images=[{"data": image_data, "media_type": media_type}],
+                purpose="openrouter_vision_fallback"
+            )
+
         return None
 
     def call_agent_with_multiple_images(
@@ -311,6 +598,14 @@ class ClaudeClient:
         Returns:
             Dictionary with response data or None
         """
+        # Sticky short-circuit: route to OpenRouter if Claude already failed
+        if self._claude_failed and self._openrouter_enabled:
+            logger.info("Claude previously failed this request — routing directly to OpenRouter (multi-image)")
+            return self._call_openrouter(
+                system_prompt, user_prompt, images=images,
+                purpose="openrouter_vision_multi_sticky"
+            )
+
         for attempt in range(retry_count):
             try:
                 start_time = time.time()
@@ -392,7 +687,17 @@ class ClaudeClient:
                 if attempt < retry_count - 1:
                     time.sleep(3 * (attempt + 1))
 
+        # Claude exhausted all retries — try OpenRouter fallback
+        if self._openrouter_enabled:
+            logger.warning("Claude call_agent_with_multiple_images failed after all retries — falling back to OpenRouter")
+            self._claude_failed = True
+            return self._call_openrouter(
+                system_prompt, user_prompt, images=images,
+                purpose="openrouter_vision_multi_fallback"
+            )
+
         return None
+
 
     def call_agent_structured(
         self,
@@ -405,8 +710,8 @@ class ClaudeClient:
     ) -> Optional[Dict[str, Any]]:
         """
         Two-call structured output with thinking:
-          Call 1: Thinking enabled (no tools) - Claude reasons deeply about the task.
-          Call 2: Forced tool_choice (no thinking) - extracts structured JSON from Call 1's reasoning.
+          Call 1: Thinking enabled (no tools) — Claude reasons deeply about the task.
+          Call 2: Forced tool_choice (no thinking) — extracts structured JSON from Call 1's reasoning.
         This avoids the API restriction that disallows thinking with forced tool_choice.
 
         Args:
@@ -420,6 +725,13 @@ class ClaudeClient:
         Returns:
             Dictionary with response data including structured 'parsed' field, or None
         """
+        # Sticky short-circuit: route to OpenRouter if Claude already failed
+        if self._claude_failed and self._openrouter_enabled:
+            logger.info("Claude previously failed this request — routing directly to OpenRouter (structured)")
+            return self._call_openrouter_structured(
+                system_prompt, user_prompt, tool_name, tool_description, tool_schema
+            )
+
         for attempt in range(retry_count):
             try:
                 start_time = time.time()
@@ -521,6 +833,14 @@ class ClaudeClient:
                 logger.error(f"Unexpected error in structured call (attempt {attempt + 1}): {e}")
                 if attempt < retry_count - 1:
                     time.sleep(3 * (attempt + 1))
+
+        # Claude exhausted all retries — try OpenRouter fallback
+        if self._openrouter_enabled:
+            logger.warning("Claude call_agent_structured failed after all retries — falling back to OpenRouter")
+            self._claude_failed = True
+            return self._call_openrouter_structured(
+                system_prompt, user_prompt, tool_name, tool_description, tool_schema
+            )
 
         return None
 

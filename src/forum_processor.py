@@ -98,13 +98,18 @@ class ForumProcessor:
         # Load API configurations
         anthropic_config = config.get_anthropic_config()
         airtable_config = config.get_airtable_config()
+        openrouter_config = config.get_openrouter_config()
 
-        # Initialize Claude client with Opus 4.5
+        # Initialize Claude client with Opus 4.5 + OpenRouter fallback
         self.claude_client = ClaudeClient(
             api_key=anthropic_config.get('api_key', ''),
             model=anthropic_config.get('model', 'claude-opus-4-5-20251101'),
             max_tokens=anthropic_config.get('max_tokens', 20000),
-            thinking_budget=anthropic_config.get('thinking_budget', 6000)
+            thinking_budget=anthropic_config.get('thinking_budget', 6000),
+            openrouter_api_key=openrouter_config.get('api_key'),
+            openrouter_model=openrouter_config.get('model', 'openai/gpt-5.2'),
+            openrouter_max_tokens=openrouter_config.get('max_tokens'),
+            openrouter_reasoning_effort=openrouter_config.get('reasoning_effort', 'high')
         )
 
         # Initialize Content Processor (for image transcription)
@@ -829,6 +834,9 @@ Subject: {forum_data.get("forumPostSubject", "")}
         }
 
         try:
+            # Reset OpenRouter fallback state for this new request
+            self.claude_client.reset_fallback_state()
+
             # Step 0a: Check for URLs
             has_urls, detected_urls = url_detector.check_forum_data(forum_data)
             results["url_check"] = has_urls
