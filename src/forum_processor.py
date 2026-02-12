@@ -136,7 +136,7 @@ class ForumProcessor:
         email_config = config.get_email_notification_config()
         self.email_client = EmailNotificationClient(
             webhook_url=email_config.get('webhook_url', ''),
-            default_recipient=email_config.get('default_recipient', 'support@e-gmat.com')
+            default_recipient=email_config.get('default_recipient', 'support@prismlearning.academy')
         ) if email_config.get('webhook_url') else None
 
         # Load prompts

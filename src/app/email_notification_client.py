@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 class EmailNotificationClient:
     """Client for sending email notifications via Power Automate"""
 
-    def __init__(self, webhook_url: str, default_recipient: str = "support@e-gmat.com"):
+    def __init__(self, webhook_url: str, default_recipient: str = "support@prismlearning.academy"):
         self.webhook_url = webhook_url
         self.default_recipient = default_recipient
         self.headers = {"Content-Type": "application/json"}
@@ -85,7 +85,7 @@ class EmailNotificationClient:
         body = (
             "<h3>SAT NSM Deflection Alert</h3>"
             "<p>A student's SAT forum query was classified as an NSM deflection category. "
-            "The student has been redirected to <b>support@e-gmat.com</b> — "
+            "The student has been redirected to <b>support@prismlearning.academy</b> — "
             "a strategy expert should follow up.</p>"
             "<table border='1' cellpadding='8' cellspacing='0' style='border-collapse:collapse;'>"
             f"<tr><td><b>NSM Category</b></td><td>{nsm_category}</td></tr>"

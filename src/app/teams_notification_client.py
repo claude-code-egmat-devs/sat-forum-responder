@@ -123,7 +123,7 @@ class TeamsNotificationClient:
         entity_name: Optional[str] = None,
         entity_id: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Send a deflection alert when an NSM query redirects student to support@e-gmat.com"""
+        """Send a deflection alert when an NSM query redirects student to support@prismlearning.academy"""
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")
 
         # Truncate long question text
@@ -133,7 +133,7 @@ class TeamsNotificationClient:
 
         html_parts = [
             "<p><b>🔶 SAT NSM Deflection Alert — Expert Follow-up Needed</b></p>",
-            "<p>Student redirected to support@e-gmat.com — a strategy expert should follow up.</p>",
+            "<p>Student redirected to support@prismlearning.academy — a strategy expert should follow up.</p>",
             "<p>",
             f"<b>NSM Category:</b> {nsm_category}<br>",
             f"<b>Correlation ID:</b> {correlation_id}<br>",

@@ -19,7 +19,7 @@ Required Elements:
 - Provide immediate actionable step
 - Ask for more specific details about the actual issue
 - Mention continuous improvement commitment
-- Include support email (support@e-gmat.com)
+- Include support email (support@prismlearning.academy)
 
 Format: HTML, max 100 words
 Wrap response in <Response> tags.
