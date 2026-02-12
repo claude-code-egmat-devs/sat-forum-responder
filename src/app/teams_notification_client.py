@@ -113,6 +113,45 @@ class TeamsNotificationClient:
             email=posted_by_email or "system@prismlearning.com"
         )
 
+    def send_deflection_alert(
+        self,
+        correlation_id: str,
+        nsm_category: str,
+        forum_post_text: Optional[str] = None,
+        platform: Optional[str] = None,
+        posted_by_email: Optional[str] = None,
+        entity_name: Optional[str] = None,
+        entity_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Send a deflection alert when an NSM query redirects student to support@e-gmat.com"""
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")
+
+        # Truncate long question text
+        question_display = (forum_post_text or "N/A")[:500]
+        if forum_post_text and len(forum_post_text) > 500:
+            question_display += "..."
+
+        html_parts = [
+            "<p><b>🔶 SAT NSM Deflection Alert — Expert Follow-up Needed</b></p>",
+            "<p>Student redirected to support@e-gmat.com — a strategy expert should follow up.</p>",
+            "<p>",
+            f"<b>NSM Category:</b> {nsm_category}<br>",
+            f"<b>Correlation ID:</b> {correlation_id}<br>",
+            f"<b>Platform:</b> {platform or 'N/A'}<br>",
+            f"<b>Entity:</b> {entity_name or 'N/A'} (ID: {entity_id or 'N/A'})<br>",
+            f"<b>Posted By:</b> {posted_by_email or 'N/A'}<br>",
+            f"<b>Student Question:</b> {question_display}",
+            "</p>",
+            f"<p><i>Deflection detected at {timestamp}</i></p>"
+        ]
+
+        message_body = "".join(html_parts)
+
+        return self.send_notification(
+            message_body=message_body,
+            email=posted_by_email or "system@prismlearning.com"
+        )
+
     def _get_status_emoji(self, status: str, forum_post_status: Optional[str]) -> str:
         if status == "completed" and forum_post_status == "posted":
             return "✅"

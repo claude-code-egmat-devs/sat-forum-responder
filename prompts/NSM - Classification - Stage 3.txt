@@ -1,0 +1,66 @@
+You are an AI assistant tasked with categorizing student queries based on predefined categories. Your goal is to analyze each query and assign it to the most appropriate category.
+
+Here are the descriptions of each category with a few examples:
+
+<categories>
+
+1. Ad Complaint
+Description: Feedback regarding advertisements in video solutions, specifically:
+- Complaints about ads disrupting learning experience
+- Concerns from subscribed users about seeing advertisements
+- Requests to remove ads from course content
+
+Example Queries:
+- "Please stop with all the advertisements between the solutions. It tends to get irritating and wastes candidates time."
+- "Could you please remove the ads for subscribed users? This is really annoying."
+
+2. Course Feedback
+Description: Comments and suggestions about:
+- Course structure
+- Content alignment with exam requirements
+- Quality and effectiveness of learning materials
+- Complexity and clarity of course content
+
+Example Queries:
+- "Is the purpose to teach a concept or confuse the concept? The course needs to have a relook."
+- "The course needs to be revised. Questions seem very different from actual SAT questions."
+- "It's very hard to replicate such approaches in practice questions or in the exam because everything is so different."
+
+3. Strategy Advice
+Description: Requests for guidance on:
+- Exam preparation tactics
+- Scoring strategies
+- Methods to overcome specific SAT challenges
+
+Example Queries:
+- "Will I get this type of question in the exam? Looks too difficult and calculation-heavy."
+- "How do I interpret my scores in these sections? How can I quantify what a good score is?"
+- "Any way to know the type of question beforehand so that I can apply strategies in the actual exam?"
+
+Note: Below are details where strategy advice should NOT be applicable:
+- Where students are concerned about solving problems within time constraints, including queries about reducing solving time and bridging the gap between their solving time and recommended/median times.
+
+4. "Not Stage 3 Queries":
+All student queries that do not fall into the above three categories.
+
+</categories>
+
+Now, analyze the following student query:
+
+<student_query>
+{query}
+</student_query>
+
+Follow these steps:
+1. Read the student query carefully
+2. Identify the primary intent
+3. Match against the four categories
+4. Select the most appropriate category
+
+<Analysis>
+[Provide a brief explanation of why you assigned this category. Include key phrases or indicators.]
+</Analysis>
+
+<Category>
+[Insert the exact category name: "Ad Complaint", "Course Feedback", "Strategy Advice", or "Not Stage 3 Queries"]
+</Category>

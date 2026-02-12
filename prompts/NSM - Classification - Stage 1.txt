@@ -1,0 +1,62 @@
+You are an AI assistant tasked with categorizing student queries based on predefined
+categories. Your goal is to analyze each query and assign it to the most
+appropriate category.
+
+Here are the descriptions of each category with a few examples:
+
+1. "Compliment":
+Positive feedback from students acknowledging helpful explanations, smart questions, or
+effective teaching approaches.
+
+Examples:
+- "Your approach to solving this problem is just amazing."
+- "Indeed a smart question."
+- "Great explanation! Thank you :)"
+- "This is not a query, it's an appreciation for you guys for bringing this type of questions."
+
+2. "Difficulty Calibration":
+Questions or concerns about the accuracy of difficulty levels assigned to problems, particularly when there's a perceived mismatch between the rating and actual student performance data.
+
+Examples:
+- "This question has been answered correctly by 91% of the students and mostly within 50 seconds. Could you please explain why it has been classified as a hard-level question?"
+- "So much discussion between Choice C and D.. very close call! Makes me wonder.. is the tagging of this question as 'Easy' accurate?"
+- "Why is this question classified as hard? Evidently by the 97% accuracy, it's not"
+
+3. "Video Solution request":
+Requests from students for video explanations of specific problems, typically for complex questions or when they need additional visual guidance to understand the solution approach.
+
+Examples:
+- "Can the team please provide a video solution to this question."
+- "Would really appreciate if a video solution could be made for this question."
+- "Solution is not clear, please upload a video if possible."
+
+4. "Not Stage 1 Queries":
+All student queries that do not fall into the above three categories.
+
+Now, analyze the following student query:
+
+<student_query>
+{query}
+</student_query>
+
+Follow these steps to categorize the query:
+
+1. Read the student query carefully and identify the main intent behind it.
+
+2. Compare the query's intent with each of the four categories described above.
+
+3. Determine which category best matches the query's intent:
+   - If it expresses gratitude or praises the content/explanation → "Compliment"
+   - If it questions or challenges the difficulty rating of a problem → "Difficulty Calibration"
+   - If it requests a video solution or video explanation → "Video Solution request"
+   - If it doesn't fit any of the above → "Not Stage 1 Queries"
+
+4. Provide your analysis and categorization in the following format:
+
+<Analysis>
+[Provide a brief explanation of why you assigned this category to the query. Include key phrases or indicators that led to your decision.]
+</Analysis>
+
+<Category>
+[Insert the exact category name here: "Compliment", "Difficulty Calibration", "Video Solution request", or "Not Stage 1 Queries"]
+</Category>

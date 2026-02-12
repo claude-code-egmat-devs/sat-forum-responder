@@ -123,6 +123,10 @@ class Config:
     def get_teams_notification_config():
         return Config._load_api_keys().get('teams_notification', {})
 
+    @staticmethod
+    def get_email_notification_config():
+        return Config._load_api_keys().get('email_notification', {})
+
 
 # Create singleton instance
 config = Config()

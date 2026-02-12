@@ -4,6 +4,7 @@ Processes forum posts through the multi-agent system with enhanced image transcr
 """
 
 import json
+import re
 import logging
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -14,6 +15,7 @@ from .app.airtable_client import AirtableClient
 from .app.url_detector import url_detector
 from .app.forum_post_client import ForumPostClient
 from .app.teams_notification_client import TeamsNotificationClient
+from .app.email_notification_client import EmailNotificationClient
 from .app.content_processor import ForumContentProcessor
 from .app.html_validator import html_validator, ValidationResult
 
@@ -130,6 +132,13 @@ class ForumProcessor:
             chat_id=teams_config.get('chat_id', '')
         ) if teams_config.get('webhook_url') else None
 
+        # Initialize Email Notification client
+        email_config = config.get_email_notification_config()
+        self.email_client = EmailNotificationClient(
+            webhook_url=email_config.get('webhook_url', ''),
+            default_recipient=email_config.get('default_recipient', 'support@e-gmat.com')
+        ) if email_config.get('webhook_url') else None
+
         # Load prompts
         self.prompts = self._load_prompts()
 
@@ -151,7 +160,25 @@ class ForumProcessor:
             "tool_5": "SAT - Variation of Question.txt",
             "tool_6": "SAT - AlternateVsSimilar.txt",
             "tool_7": "SAT - Response Formatter.txt",
-            "html_formatter": "html formatter Prompt.txt"
+            "html_formatter": "html formatter Prompt.txt",
+            # NSM Flow - Classification (3-stage cascade)
+            "nsm_stage1": "NSM - Classification - Stage 1.txt",
+            "nsm_stage2": "NSM - Classification - Stage 2.txt",
+            "nsm_stage3": "NSM - Classification - Stage 3.txt",
+            # NSM Flow - Stage 1 Responses
+            "nsm_compliment": "NSM - Compliment Response.txt",
+            "nsm_difficulty_validator": "NSM - Difficulty Validator.txt",
+            "nsm_difficulty_right": "NSM - Difficulty Response Right.txt",
+            "nsm_difficulty_wrong": "NSM - Difficulty Response Wrong.txt",
+            "nsm_video_request": "NSM - Video Request Response.txt",
+            # NSM Flow - Stage 2 Responses
+            "nsm_timing_fast": "NSM - Timing Response Fast.txt",
+            "nsm_timing_slow": "NSM - Timing Response Slow.txt",
+            "nsm_timing_incorrect": "NSM - Timing Response Incorrect.txt",
+            # NSM Flow - Stage 3 Responses
+            "nsm_ad_complaint": "NSM - Ad Complaint Response.txt",
+            "nsm_course_feedback": "NSM - Course Feedback Response.txt",
+            "nsm_strategy_advice": "NSM - Strategy Advice Response.txt",
         }
 
         for key, filename in prompt_files.items():
@@ -503,6 +530,283 @@ Subject: {forum_data.get("forumPostSubject", "")}
             logger.error(f"Error formatting HTML: {e}")
             return None
 
+    # ── NSM (Non-Subject-Matter) Flow Methods ──
+
+    def _extract_xml_tag(self, text: str, tag: str) -> str:
+        """Extract content from XML-style tags in AI response"""
+        pattern = f"<{tag}>(.*?)</{tag}>"
+        match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
+        return match.group(1).strip() if match else ""
+
+    def _run_nsm_classifier(self, stage: int, forum_data: Dict[str, Any],
+                            correlation_id: str, sequence: int) -> Optional[Dict[str, Any]]:
+        """Run NSM classifier for a specific stage"""
+        prompt_key = f"nsm_stage{stage}"
+        logger.info(f"[{correlation_id}] Running NSM Stage {stage} Classification...")
+
+        forum_post_text = forum_data.get("forumPostText", "") or forum_data.get("ForumPostText", "")
+
+        result = self.claude_client.call_agent(
+            system_prompt=self.prompts[prompt_key],
+            user_prompt=forum_post_text
+        )
+
+        if result:
+            response_text = result.get("response", "")
+            category = self._extract_xml_tag(response_text, "Category")
+            analysis = self._extract_xml_tag(response_text, "Analysis")
+
+            logger.info(f"[{correlation_id}] NSM Stage {stage} Category: {category}")
+            logger.info(f"[{correlation_id}] NSM Stage {stage} Analysis: {analysis[:200]}...")
+
+            return {
+                "raw": result,
+                "category": category,
+                "analysis": analysis,
+                "stage": stage
+            }
+        return None
+
+    def _run_nsm_response(self, prompt_key: str, forum_data: Dict[str, Any],
+                          correlation_id: str, sequence: int,
+                          extra_vars: Dict[str, Any] = None) -> Optional[Dict[str, Any]]:
+        """Run NSM response generator"""
+        logger.info(f"[{correlation_id}] Running NSM Response: {prompt_key}...")
+
+        prompt_template = self.prompts.get(prompt_key, "")
+        if not prompt_template:
+            logger.error(f"NSM prompt not found: {prompt_key}")
+            return None
+
+        question_data = forum_data.get("questionDataVO", {})
+        if isinstance(question_data, list):
+            question_data = question_data[0] if question_data else {}
+
+        variables = {
+            "ForumPostText": forum_data.get("forumPostText", "") or forum_data.get("ForumPostText", ""),
+            "QuestionOverallAccuracy": question_data.get("overallAccuracy", ""),
+            "QuestionDifficultyLevel": question_data.get("difficultyLevel", ""),
+            "QuestionMedianTime": question_data.get("medianTime", ""),
+            "UserTimeTakenToAttemptQuestion": question_data.get("userTime", ""),
+            "passageTabListString": question_data.get("passageTabListString", ""),
+            "questionStem": question_data.get("questionStem", ""),
+            "questionText": question_data.get("questionText", ""),
+        }
+        if extra_vars:
+            variables.update(extra_vars)
+
+        user_prompt = prompt_template
+        for key, value in variables.items():
+            user_prompt = user_prompt.replace(f"{{{{{key}}}}}", str(value) if value else "")
+
+        result = self.claude_client.call_agent(
+            system_prompt="",
+            user_prompt=user_prompt
+        )
+
+        if result:
+            response_text = result.get("response", "")
+            extracted_response = self._extract_xml_tag(response_text, "Response")
+
+            if extracted_response:
+                logger.info(f"[{correlation_id}] NSM Response extracted: {extracted_response[:200]}...")
+                return {
+                    "raw": result,
+                    "response": extracted_response,
+                    "response_html": extracted_response  # NSM responses are already HTML
+                }
+            else:
+                logger.warning(f"[{correlation_id}] No <Response> tag found, using full response")
+                return {
+                    "raw": result,
+                    "response": response_text,
+                    "response_html": response_text
+                }
+        return None
+
+    def _validate_difficulty_claim(self, forum_data: Dict[str, Any],
+                                   correlation_id: str) -> str:
+        """Validate if student's difficulty claim is right or wrong"""
+        logger.info(f"[{correlation_id}] Validating difficulty claim...")
+
+        result = self._run_nsm_response("nsm_difficulty_validator", forum_data, correlation_id, sequence=0)
+        if result:
+            response_text = result["raw"].get("response", "")
+            claim = self._extract_xml_tag(response_text, "Student_Claim")
+            return claim.strip().lower() if claim else "wrong"
+        return "wrong"
+
+    def _get_timing_prompt_key(self, forum_data: Dict[str, Any]) -> str:
+        """Determine which timing response prompt to use based on student performance"""
+        question_data = forum_data.get("questionDataVO", {})
+        if isinstance(question_data, list):
+            question_data = question_data[0] if question_data else {}
+
+        is_correct = str(question_data.get("isCorrect", "")).lower() == "yes"
+        user_time = float(question_data.get("userTime", 0) or 0)
+        median_time = float(question_data.get("medianTime", 0) or 0)
+
+        if is_correct:
+            if user_time <= median_time:
+                return "nsm_timing_fast"
+            else:
+                return "nsm_timing_slow"
+        else:
+            return "nsm_timing_incorrect"
+
+    def _process_nsm_flow(self, forum_data: Dict[str, Any], a1_classification: str,
+                          results: Dict[str, Any], correlation_id: str) -> Dict[str, Any]:
+        """
+        Process Non-Subject-Matter queries through 3-stage cascade classification.
+
+        Flow:
+        - Gratitude -> Compliment Response
+        - SAT_Strategy_Doubt / Unrelated_to_SAT -> NSM Classification Cascade
+        """
+        logger.info(f"[{correlation_id}] Starting NSM flow for: {a1_classification}")
+        results["nsm_flow"] = True
+        results["nsm_category"] = None
+
+        try:
+            # Handle Gratitude directly (maps to Compliment)
+            if a1_classification == "Gratitude":
+                logger.info(f"[{correlation_id}] Gratitude detected - generating Compliment response")
+                nsm_result = self._run_nsm_response("nsm_compliment", forum_data, correlation_id, sequence=2)
+                if nsm_result:
+                    results["nsm_category"] = "Compliment"
+                    results["final_response"] = nsm_result["response"]
+                    results["final_response_html"] = nsm_result["response_html"]
+                    results["processing_status"] = "completed"
+                    return results
+
+            # Stage 1 Classification
+            stage1_result = self._run_nsm_classifier(1, forum_data, correlation_id, sequence=2)
+            if not stage1_result:
+                results["hil_flag"] = True
+                results["processing_status"] = "hil_exception"
+                return results
+
+            stage1_category = stage1_result["category"]
+            results["nsm_stage1"] = stage1_category
+
+            # Handle Stage 1 categories
+            if stage1_category == "Compliment":
+                nsm_result = self._run_nsm_response("nsm_compliment", forum_data, correlation_id, sequence=3)
+                if nsm_result:
+                    results["nsm_category"] = "Compliment"
+                    results["final_response"] = nsm_result["response"]
+                    results["final_response_html"] = nsm_result["response_html"]
+                    results["processing_status"] = "completed"
+                    return results
+
+            elif stage1_category == "Difficulty Calibration":
+                claim_result = self._validate_difficulty_claim(forum_data, correlation_id)
+                prompt_key = "nsm_difficulty_right" if claim_result == "right" else "nsm_difficulty_wrong"
+                nsm_result = self._run_nsm_response(prompt_key, forum_data, correlation_id, sequence=3)
+                if nsm_result:
+                    results["nsm_category"] = f"Difficulty_Calibration_{claim_result.title()}"
+                    results["final_response"] = nsm_result["response"]
+                    results["final_response_html"] = nsm_result["response_html"]
+                    results["processing_status"] = "completed"
+                    return results
+
+            elif stage1_category == "Video Solution request":
+                nsm_result = self._run_nsm_response("nsm_video_request", forum_data, correlation_id, sequence=3)
+                if nsm_result:
+                    results["nsm_category"] = "Video_Request"
+                    results["final_response"] = nsm_result["response"]
+                    results["final_response_html"] = nsm_result["response_html"]
+                    results["processing_status"] = "completed"
+                    return results
+
+            elif stage1_category == "Not Stage 1 Queries":
+                # Stage 2 Classification
+                stage2_result = self._run_nsm_classifier(2, forum_data, correlation_id, sequence=3)
+                if not stage2_result:
+                    results["hil_flag"] = True
+                    results["processing_status"] = "hil_exception"
+                    return results
+
+                stage2_category = stage2_result["category"]
+                results["nsm_stage2"] = stage2_category
+
+                # Handle Stage 2 categories
+                if stage2_category == "Timing Issue":
+                    timing_prompt_key = self._get_timing_prompt_key(forum_data)
+                    nsm_result = self._run_nsm_response(timing_prompt_key, forum_data, correlation_id, sequence=4)
+                    if nsm_result:
+                        results["nsm_category"] = f"Timing_Issue_{timing_prompt_key.split('_')[-1].title()}"
+                        results["final_response"] = nsm_result["response"]
+                        results["final_response_html"] = nsm_result["response_html"]
+                        results["processing_status"] = "completed"
+                        return results
+
+                elif stage2_category == "Where Explained":
+                    logger.info(f"[{correlation_id}] Where Explained - routing to HIL")
+                    results["nsm_category"] = "Where_Explained"
+                    results["hil_flag"] = True
+                    results["processing_status"] = "hil_exception"
+                    return results
+
+                elif stage2_category == "Not Stage 2 Queries":
+                    # Stage 3 Classification
+                    stage3_result = self._run_nsm_classifier(3, forum_data, correlation_id, sequence=4)
+                    if not stage3_result:
+                        results["hil_flag"] = True
+                        results["processing_status"] = "hil_exception"
+                        return results
+
+                    stage3_category = stage3_result["category"]
+                    results["nsm_stage3"] = stage3_category
+
+                    # Handle Stage 3 categories
+                    if stage3_category == "Ad Complaint":
+                        nsm_result = self._run_nsm_response("nsm_ad_complaint", forum_data, correlation_id, sequence=5)
+                        if nsm_result:
+                            results["nsm_category"] = "Ad_Complaint"
+                            results["final_response"] = nsm_result["response"]
+                            results["final_response_html"] = nsm_result["response_html"]
+                            results["processing_status"] = "completed"
+                            return results
+
+                    elif stage3_category == "Course Feedback":
+                        nsm_result = self._run_nsm_response("nsm_course_feedback", forum_data, correlation_id, sequence=5)
+                        if nsm_result:
+                            results["nsm_category"] = "Course_Feedback"
+                            results["final_response"] = nsm_result["response"]
+                            results["final_response_html"] = nsm_result["response_html"]
+                            results["processing_status"] = "completed"
+                            return results
+
+                    elif stage3_category == "Strategy Advice":
+                        nsm_result = self._run_nsm_response("nsm_strategy_advice", forum_data, correlation_id, sequence=5)
+                        if nsm_result:
+                            results["nsm_category"] = "Strategy_Advice"
+                            results["final_response"] = nsm_result["response"]
+                            results["final_response_html"] = nsm_result["response_html"]
+                            results["processing_status"] = "completed"
+                            return results
+
+                    else:
+                        # Not Stage 3 Queries -> HIL
+                        logger.info(f"[{correlation_id}] Not Stage 3 - routing to HIL")
+                        results["nsm_category"] = "Unclassified"
+                        results["hil_flag"] = True
+                        results["processing_status"] = "hil_exception"
+                        return results
+
+            # Fallback to HIL
+            logger.warning(f"[{correlation_id}] NSM flow could not generate response - routing to HIL")
+            results["hil_flag"] = True
+            results["processing_status"] = "hil_exception"
+            return results
+
+        except Exception as e:
+            logger.error(f"[{correlation_id}] Error in NSM flow: {e}")
+            results["hil_flag"] = True
+            results["processing_status"] = "error"
+            return results
+
     def process_forum_post(self, forum_data: Dict[str, Any]) -> Dict[str, Any]:
         """Process a single forum post through the agent system"""
         correlation_id = forum_data.get("correlationId") or forum_data.get("Forum_Corr_ID")
@@ -557,10 +861,8 @@ Subject: {forum_data.get("forumPostSubject", "")}
 
             # Check if non-SM doubt (SAT uses SM_Doubt, SAT_Strategy_Doubt, Unrelated_to_SAT, Gratitude)
             if a1_classification != "SM_Doubt":
-                logger.info(f"Non-SM doubt detected: {a1_classification} - Triggering HIL")
-                results["hil_flag"] = True
-                results["processing_status"] = "hil_exception"
-                return results
+                logger.info(f"Non-SM doubt detected: {a1_classification} - Routing to NSM flow")
+                return self._process_nsm_flow(forum_data, a1_classification, results, correlation_id)
 
             # Step 2: A2 Deep SM Classifier
             a2_result = self._run_classifier("a2_deep_sm", forum_data, correlation_id, sequence=2)
@@ -697,6 +999,7 @@ Subject: {forum_data.get("forumPostSubject", "")}
         Determine if the response should be posted to the forum.
 
         Posting Rules:
+        - NSM flow: post if category is in auto-post list
         - Genuine_Doubt: Always post
         - Pointing_Out_Corrections: Only post if validation_result.classification == "INVALID"
         - Variation_of_Question: Always post
@@ -706,6 +1009,28 @@ Subject: {forum_data.get("forumPostSubject", "")}
         """
         if results.get("processing_status") != "completed":
             return False
+
+        # NSM flow: allow posting if category is eligible for auto-posting
+        if results.get("nsm_flow"):
+            nsm_category = results.get("nsm_category")
+            nsm_auto_post_categories = {
+                "Compliment",
+                "Difficulty_Calibration_Right",
+                "Difficulty_Calibration_Wrong",
+                "Video_Request",
+                "Timing_Issue_Fast",
+                "Timing_Issue_Slow",
+                "Timing_Issue_Incorrect",
+                "Ad_Complaint",
+                "Course_Feedback",
+                "Strategy_Advice",
+            }
+            if nsm_category in nsm_auto_post_categories:
+                logger.info(f"NSM flow with category '{nsm_category}' - eligible for posting")
+                return True
+            else:
+                logger.warning(f"NSM flow with category '{nsm_category}' - not eligible for posting")
+                return False
 
         a2_classification = None
         if results.get("a2_result") and results["a2_result"].get("parsed"):
@@ -739,6 +1064,20 @@ Subject: {forum_data.get("forumPostSubject", "")}
         Extract sub-classification details based on the tool used.
         Returns a JSON string with relevant sub-classification fields.
         """
+        # Handle NSM flow sub-classification
+        if results.get("nsm_flow"):
+            nsm_data = {}
+            nsm_category = results.get("nsm_category")
+            if nsm_category:
+                nsm_data["nsm_category"] = nsm_category
+            if results.get("nsm_stage1"):
+                nsm_data["nsm_stage1"] = results["nsm_stage1"]
+            if results.get("nsm_stage2"):
+                nsm_data["nsm_stage2"] = results["nsm_stage2"]
+            if results.get("nsm_stage3"):
+                nsm_data["nsm_stage3"] = results["nsm_stage3"]
+            return json.dumps(nsm_data, ensure_ascii=False) if nsm_data else None
+
         if not results.get("tool_result") or not results["tool_result"].get("parsed"):
             return None
 
@@ -994,14 +1333,26 @@ Review this response and provide your quality assessment."""
                 }, ensure_ascii=False)
 
             classification = None
-            if results.get("a2_result") and results["a2_result"].get("parsed"):
+            if results.get("nsm_flow"):
+                classification = f"NSM:{results.get('nsm_category', 'Unknown')}"
+            elif results.get("a2_result") and results["a2_result"].get("parsed"):
                 classification = results["a2_result"]["parsed"].get("classification")
 
             # Extract sub-classification
             sub_classification = self._extract_sub_classification(classification, results)
 
             classification_justification = {}
-            if results.get("a2_result") and results["a2_result"].get("parsed"):
+            if results.get("nsm_flow"):
+                a1_parsed = results.get("a1_result", {}).get("parsed", {})
+                classification_justification = {
+                    "classification": classification,
+                    "a1_classification": a1_parsed.get("classification"),
+                    "nsm_category": results.get("nsm_category"),
+                    "nsm_stage1": results.get("nsm_stage1"),
+                    "nsm_stage2": results.get("nsm_stage2"),
+                    "nsm_stage3": results.get("nsm_stage3"),
+                }
+            elif results.get("a2_result") and results["a2_result"].get("parsed"):
                 classification_justification = results["a2_result"]["parsed"].copy()
             if results.get("image_processing_stats"):
                 classification_justification["image_processing"] = results["image_processing_stats"]
@@ -1134,11 +1485,41 @@ Review this response and provide your quality assessment."""
             else:
                 save_status["forum_post_status"] = "skipped"
 
+            # Send deflection alerts for NSM categories that redirect to support
+            DEFLECTION_CATEGORIES = {"Strategy_Advice", "Course_Feedback"}
+            nsm_category = results.get("nsm_category")
+            if nsm_category and nsm_category in DEFLECTION_CATEGORIES:
+                deflection_kwargs = {
+                    "correlation_id": results["correlation_id"],
+                    "nsm_category": nsm_category,
+                    "forum_post_text": forum_data.get("forumPostText") or forum_data.get("ForumPostText"),
+                    "platform": forum_data.get("platformName"),
+                    "posted_by_email": forum_data.get("postedBy") or forum_data.get("parentPostedBy"),
+                    "entity_name": forum_data.get("entityName"),
+                    "entity_id": str(forum_data.get("entityId", "")) if forum_data.get("entityId") else None,
+                }
+                # Teams deflection alert
+                if self.teams_client:
+                    try:
+                        self.teams_client.send_deflection_alert(**deflection_kwargs)
+                        logger.info(f"Deflection Teams alert sent for {nsm_category}: {results['correlation_id']}")
+                    except Exception as e:
+                        logger.error(f"Error sending deflection Teams alert: {e}")
+                # Email deflection alert
+                if self.email_client:
+                    try:
+                        self.email_client.send_deflection_email(**deflection_kwargs)
+                        logger.info(f"Deflection email sent for {nsm_category}: {results['correlation_id']}")
+                    except Exception as e:
+                        logger.error(f"Error sending deflection email: {e}")
+
             # Send Teams notification
             if self.teams_client:
                 try:
                     classification = None
-                    if results.get("a2_result") and results["a2_result"].get("parsed"):
+                    if results.get("nsm_flow"):
+                        classification = f"NSM:{results.get('nsm_category', 'Unknown')}"
+                    elif results.get("a2_result") and results["a2_result"].get("parsed"):
                         classification = results["a2_result"]["parsed"].get("classification")
 
                     error_msg = save_status.get("forum_post_error")
