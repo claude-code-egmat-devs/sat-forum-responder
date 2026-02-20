@@ -347,7 +347,9 @@ def process_webhook_background(forum_data: dict, correlation_id: str):
         stats['total_processed'] += 1
 
         # Save to Airtable and post to forum
-        save_status = processor.save_results(results)
+        # Extract dry_run flag if set by webhook handler
+        dry_run = forum_data.pop('_dry_run', False)
+        save_status = processor.save_results(results, dry_run=dry_run)
 
         # Update database
         update_webhook_status(
@@ -355,7 +357,7 @@ def process_webhook_background(forum_data: dict, correlation_id: str):
             status=results.get('processing_status', 'completed'),
             url_check=results.get('url_check', False),
             urls_list=json.dumps(results.get('urls_list', [])),
-            classification=results.get('a2_result', {}).get('parsed', {}).get('classification') if results.get('a2_result') else None,
+            classification=(f"NSM:{results.get('nsm_category', 'Unknown')}" if results.get('nsm_flow') else results.get('a2_result', {}).get('parsed', {}).get('classification') if results.get('a2_result') else None),
             processing_time_ms=processing_time_ms,
             forum_post_status=save_status.get('forum_post_status'),
             forum_post_error=save_status.get('forum_post_error'),
@@ -476,6 +478,12 @@ def receive_webhook():
         save_webhook_received(correlation_id, request.remote_addr, request.headers)
 
         try:
+            # Check for dry_run query parameter
+            dry_run = request.args.get('dry_run', 'false').lower() == 'true'
+            if dry_run:
+                forum_data['_dry_run'] = True
+                logger.info(f"[{correlation_id}] DRY-RUN mode enabled via query parameter")
+
             processing_queue.put_nowait((forum_data, correlation_id))
             logger.info(f"Webhook received and queued: {correlation_id}")
 
@@ -614,7 +622,7 @@ def reprocess_by_correlation_id(correlation_id: str):
         update_webhook_status(
             correlation_id,
             status=results.get('processing_status', 'unknown'),
-            classification=results.get('a2_result', {}).get('parsed', {}).get('classification') if results.get('a2_result') else None,
+            classification=(f"NSM:{results.get('nsm_category', 'Unknown')}" if results.get('nsm_flow') else results.get('a2_result', {}).get('parsed', {}).get('classification') if results.get('a2_result') else None),
             processing_time_ms=processing_time_ms,
             forum_post_status=save_status.get('forum_post_status'),
             forum_post_error=save_status.get('forum_post_error'),
@@ -630,7 +638,7 @@ def reprocess_by_correlation_id(correlation_id: str):
             'status': 'completed',
             'correlation_id': correlation_id,
             'processing_status': results.get('processing_status'),
-            'classification': results.get('a2_result', {}).get('parsed', {}).get('classification') if results.get('a2_result') else None,
+            'classification': (f"NSM:{results.get('nsm_category', 'Unknown')}" if results.get('nsm_flow') else results.get('a2_result', {}).get('parsed', {}).get('classification') if results.get('a2_result') else None),
             'hil_flag': results.get('hil_flag', False),
             'forum_post_status': save_status.get('forum_post_status'),
             'airtable_saved': save_status.get('airtable_saved'),
